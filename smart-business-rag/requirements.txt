@@ -1,0 +1,29 @@
+# Web Framework & API
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# LangChain & AI Orchestration
+langchain
+langchain-core
+langchain-community
+langgraph
+langchain-google-genai
+langchain-groq
+
+# Document Parsing & Embeddings
+pypdf
+sentence-transformers
+
+# Database & Vector Store
+psycopg2-binary
+pgvector
+sqlalchemy
+sqlmodel
+
+# Observability, Testing & Quality
+langsmith
+pytest
+ruff
+python-dotenv
