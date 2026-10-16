@@ -31,12 +31,12 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 ### 📥 Phase 1: Ingestion, Metadata Enrichment & Vector Pipeline
 > **Goal:** Transform unstructured PDFs into cleanly chunked, highly searchable vector embeddings with rigorous page-level provenance.
 
-- [ ] **1.1 PDF Extraction:**
+- [X] **1.1 PDF Extraction:**
   - Build an ingestion module using `pypdf` that extracts text page-by-page.
   - Retain structural metadata: `document_name`, `company`, `fiscal_period`, and `page_number`.
-- [ ] **1.2 Chunking Strategy:**
+- [X] **1.2 Chunking Strategy:**
   - Implement `RecursiveCharacterTextSplitter` with tuned chunk size (~800–1000 tokens) and overlap (~150 tokens) to preserve financial table context.
-- [ ] **1.3 Vector Store Setup (`pgvector`):**
+- [X] **1.3 Vector Store Setup (`pgvector`):**
   - Spin up PostgreSQL with `pgvector` (via local `docker-compose.yml` or remote Supabase).
   - Define the vector schema using SQLModel/SQLAlchemy.
 - [ ] **1.4 Embedding & Loading:**
