@@ -28,7 +28,7 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 
 ---
 
-### 📥 Phase 1: Ingestion, Metadata Enrichment & Vector Pipeline
+### 📥 Phase 1: Ingestion, Metadata Enrichment & Vector Pipeline [COMPLETED ✅]
 > **Goal:** Transform unstructured PDFs into cleanly chunked, highly searchable vector embeddings with rigorous page-level provenance.
 
 - [X] **1.1 PDF Extraction:**
@@ -39,7 +39,7 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 - [X] **1.3 Vector Store Setup (`pgvector`):**
   - Spin up PostgreSQL with `pgvector` (via local `docker-compose.yml` or remote Supabase).
   - Define the vector schema using SQLModel/SQLAlchemy.
-- [ ] **1.4 Embedding & Loading:**
+- [X] **1.4 Embedding & Loading:**
   - Generate embeddings and persist chunks with metadata into the vector database.
   - Write an isolated smoke test script to verify semantic similarity search returns relevant chunks with correct metadata.
 
@@ -48,12 +48,12 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 ### 🧠 Phase 2: Agentic RAG Workflow with LangGraph
 > **Goal:** Implement a self-correcting retrieval graph to eliminate hallucinations and enforce strict business citations.
 
-- [ ] **2.1 Define the Graph State:**
+- [X] **2.1 Define the Graph State:**
   - Create a Pydantic/TypedDict state holding: `query`, `documents`, `web_search_fallback`, `generation`, and `retry_count`.
-- [ ] **2.2 Fast Node - Retrieval Grader (Groq):**
+- [X] **2.2 Fast Node - Retrieval Grader (Groq):**
   - Use Groq for ultra-low latency relevance grading.
   - Prompt: Determine whether retrieved chunks contain sufficient context to answer the business question.
-- [ ] **2.3 Heavy Node - Answer Synthesis & Citations (Gemini):**
+- [X] **2.3 Heavy Node - Answer Synthesis & Citations (Gemini):**
   - Pass validated chunks to Gemini with a strict system prompt.
   - Enforce structured output via Pydantic:
     ```json
