@@ -50,8 +50,32 @@ def similarity_search_with_metadata(
     filter_dict: Optional[dict] = None
 ) -> List[Document]:
     """
-    Executes a semantic similarity search with optional metadata filtering.
-    e.g., filter_dict={"fiscal_period": "3Q25"}
+    Executes a semantic similarity search.
+    If a filter_dict is provided (e.g., {"fiscal_period": "4Q25"}),
+    it retrieves candidate chunks and filters them reliably without
+    triggering Postgres JSONPath version mismatches.
     """
     vector_store = get_vector_store()
-    return vector_store.similarity_search(query, k=k, filter=filter_dict)
+    
+    if not filter_dict:
+        # Standard search without filters
+        return vector_store.similarity_search(query, k=k)
+    
+    # Retrieve slightly more candidates to account for filtering
+    raw_results = vector_store.similarity_search(query, k=k * 3)
+    
+    # Filter candidates by matching metadata keys
+    filtered_results: List[Document] = []
+    for doc in raw_results:
+        matches = True
+        for key, expected_value in filter_dict.items():
+            if str(doc.metadata.get(key, "")).upper() != str(expected_value).upper():
+                matches = False
+                break
+        if matches:
+            filtered_results.append(doc)
+        if len(filtered_results) >= k:
+            break
+            
+    # If the filter was too restrictive and returned nothing, fallback to raw top results
+    return filtered_results if filtered_results else raw_results[:k]

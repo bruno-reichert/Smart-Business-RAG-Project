@@ -64,9 +64,9 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
       ]
     }
     ```
-- [ ] **2.4 Guardrail Node - Hallucination / Grounding Check:**
+- [X] **2.4 Guardrail Node - Hallucination / Grounding Check:**
   - Ensure every financial/operational metric in the final answer is directly supported by the retrieved quotes.
-- [ ] **2.5 Observability:**
+- [X] **2.5 Observability:**
   - Verify LangSmith project dashboard logs every node transition, latency profile, and token count.
 
 ---
@@ -74,7 +74,7 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 ### 🚀 Phase 3: The Production API Layer (FastAPI)
 > **Goal:** Expose the ingestion and RAG agent pipelines via robust, documented REST endpoints.
 
-- [ ] **3.1 Architecture & Project Structure:**
+- [X] **3.1 Architecture & Project Structure:**
   - Set up a clean layered pattern:
     ```text
     app/
@@ -84,12 +84,12 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
     ├── services/          # LangGraph graph, vector store client
     └── main.py            # FastAPI entry point & CORS
     ```
-- [ ] **3.2 Ingestion Endpoint (`POST /api/v1/documents/upload`):**
+- [X] **3.2 Ingestion Endpoint (`POST /api/v1/documents/upload`):**
   - Accept PDF file uploads, execute the ingestion pipeline asynchronously, and return an ingestion summary status.
-- [ ] **3.3 Operational Query Endpoint (`POST /api/v1/query`):**
+- [X] **3.3 Operational Query Endpoint (`POST /api/v1/query`):**
   - Accept query payload with optional metadata filters (e.g., `company`, `year`).
   - Stream or return the structured response with citations.
-- [ ] **3.4 Health & Metrics (`GET /health`):**
+- [X] **3.4 Health & Metrics (`GET /health`):**
   - Verify DB connection and LLM API availability for container health checks.
 
 ---
