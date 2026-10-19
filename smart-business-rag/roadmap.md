@@ -97,11 +97,11 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 ### 🛡️ Phase 4: Automated Testing & Verification
 > **Goal:** Guarantee production reliability and prevent regressions.
 
-- [ ] **4.1 Unit Testing:**
+- [X] **4.1 Unit Testing:**
   - Test chunking logic, metadata preservation, and Pydantic schema validation.
-- [ ] **4.2 Integration Testing:**
+- [X] **4.2 Integration Testing:**
   - Write Pytest routines mocking external LLM responses to test FastAPI endpoints and status codes (200, 422, 500).
-- [ ] **4.3 Retrieval Evaluation:**
+- [X] **4.3 Retrieval Evaluation:**
   - Create a golden dataset of 5 representative business questions with known ground-truth citations to benchmark retrieval accuracy.
 
 ---
@@ -122,8 +122,8 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 
 ## 🎯 Progress Tracker
 - [x] Phase 0: Foundations & Connections
-- [ ] Phase 1: Ingestion & Vector Storage
-- [ ] Phase 2: LangGraph Agentic Pipeline
-- [ ] Phase 3: FastAPI Backend
-- [ ] Phase 4: Pytest Suite
+- [x] Phase 1: Ingestion & Vector Storage
+- [x] Phase 2: LangGraph Agentic Pipeline
+- [x] Phase 3: FastAPI Backend
+- [x] Phase 4: Pytest Suite
 - [ ] Phase 5: Docker & Cloud Deployment

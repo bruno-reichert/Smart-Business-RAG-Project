@@ -2573,6 +2573,11 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.143.2" },
@@ -2598,6 +2603,9 @@ requires-dist = [
     { name = "sqlmodel", specifier = ">=0.0.48" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "httpx", specifier = ">=0.28.1" }]
 
 [[package]]
 name = "sniffio"
