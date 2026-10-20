@@ -1,3 +1,4 @@
+import uuid
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -27,11 +28,17 @@ class QueryRequest(BaseModel):
         description="Filter by quarter (e.g. 3Q25, 4Q25)",
         examples=["4Q25"]
     )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Optional session ID for conversational memory. If omitted, a new session is generated.",
+        examples=["session-abc-123"]
+    )
 
 class QueryResponse(BaseModel):
-    """Standardized API response containing the insight and execution metadata."""
+    """Standardized API response containing the insight, thread ID, and execution metadata."""
     query: str
     fiscal_filter: Optional[str]
+    thread_id: str = Field(description="Active session thread ID for subsequent follow-up queries.")
     insight: OperationalInsight
 
 class DocumentUploadResponse(BaseModel):

@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any, List, cast
 from dotenv import load_dotenv
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -27,6 +27,68 @@ gemini_llm = ChatGoogleGenerativeAI(
     temperature=0.0
 )
 
+# --- NODE 0: CONTEXTUAL QUERY REFORMULATOR (Groq) ---
+def reformulate_query_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Analyzes recent conversation history. If the user's latest query is a follow-up
+    or contains ambiguous pronouns (e.g., 'what about Colombia?'), Groq rewrites it
+    into a self-contained search query before vector retrieval.
+    """
+    messages = state.get("messages", [])
+    raw_query = state["query"]
+    
+    # If this is the very first turn (no prior messages), skip reformulation
+    if len(messages) <= 1:
+        print(f"[Node: Query Reformulator] First turn detected. Using raw query: '{raw_query}'")
+        return {
+            "query": raw_query,
+            "messages": [HumanMessage(content=raw_query)]
+        }
+
+    print(f"[Node: Query Reformulator] Context detected ({len(messages)} prior messages). Analyzing with Groq...")
+
+    # Format recent history for the rewriter (last 4 messages maximum to keep prompt lean)
+    recent_history = messages[-4:]
+    history_str = ""
+    for msg in recent_history:
+        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+        content_preview = str(msg.content)[:200]
+        history_str += f"{role}: {content_preview}\n"
+
+    system_prompt = (
+        "You are an expert query reformulation assistant for a financial research system.\n"
+        "Given the recent conversation history and a follow-up user query, rewrite the user query "
+        "into a standalone, unambiguous search query that can be used for semantic document retrieval.\n"
+        "CRITICAL RULES:\n"
+        "1. Do NOT answer the question. Only rewrite it.\n"
+        "2. If the user query is ALREADY standalone and unambiguous, return it EXACTLY as is.\n"
+        "3. Output ONLY the rewritten search query, with no quotation marks, preambles, or explanations."
+    )
+
+    user_prompt = (
+        f"Conversation History:\n{history_str}\n"
+        f"Latest User Query: {raw_query}\n\n"
+        f"Standalone Search Query:"
+    )
+
+    try:
+        response = groq_llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        
+        rewritten = str(response.content).strip().strip('"').strip("'")
+        print(f"[Node: Query Reformulator] Reformulated: '{raw_query}' -> '{rewritten}'")
+        return {
+            "query": rewritten,
+            "messages": [HumanMessage(content=raw_query)]
+        }
+    except Exception as e:
+        print(f"Warning: Query reformulation failed, falling back to raw query. Error: {e}")
+        return {
+            "query": raw_query,
+            "messages": [HumanMessage(content=raw_query)]
+        }
 
 # --- NODE 1: RETRIEVE ---
 def retrieve_node(state: AgentState) -> Dict[str, Any]:
@@ -126,8 +188,10 @@ def generate_node(state: AgentState) -> Dict[str, Any]:
     insight: OperationalInsight = cast(OperationalInsight, raw_insight)
     print("[Node: Generate] Answer synthesized successfully with citations.")
     
-    return {"final_insight": insight}
-
+    return {
+            "final_insight": insight,
+            "messages": [AIMessage(content=insight.answer)]
+        }
 
 # --- NODE 4: OUT OF BOUNDS / FALLBACK ---
 def fallback_node(state: AgentState) -> Dict[str, Any]:
@@ -144,4 +208,7 @@ def fallback_node(state: AgentState) -> Dict[str, Any]:
         citations=[],
         is_grounded=False
     )
-    return {"final_insight": fallback_insight}
+    return {
+        "final_insight": fallback_insight,
+        "messages": [AIMessage(content=fallback_insight.answer)]
+    }

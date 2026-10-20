@@ -106,24 +106,44 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 
 ---
 
-### 🐳 Phase 5: Containerization, Deployment & Documentation
-> **Goal:** Deliver a showcase-ready repository that any hiring manager or tech lead can clone and run in one command.
+### 💬 Phase 5: Conversational Memory & Interactive Chat UI
+> **Goal:** Transform the single-shot RAG API into a multi-turn operational co-pilot with conversation history tracking, query reformulation, and a visual chat interface.
 
-- [ ] **5.1 Dockerization:**
-  - Write a multi-stage `Dockerfile` optimizing build time and image size with `uv`.
-  - Write a `docker-compose.yml` linking the FastAPI app and the `pgvector` container.
-- [ ] **5.2 Cloud Deployment (Free Tier):**
-  - Deploy FastAPI service to **Render** (or Railway).
-  - Connect to **Supabase** for the hosted vector database.
-- [ ] **5.3 Portfolio Readme & Video Walkthrough:**
-  - Write an executive README: Business context, architecture diagram, instructions to run locally, sample API calls, and LangSmith tracing screenshots.
+- [X] **5.1 Conversational State & LangGraph Checkpointing:**
+  - Add chat message history (`messages: List[BaseMessage]`) to `AgentState`.
+  - Integrate LangGraph's in-memory checkpointer (`MemorySaver`) using persistent `thread_id` sessions.
+- [X] **5.2 Contextual Query Reformulation Node (Groq):**
+  - Implement a fast pre-retrieval node using Groq to re-write follow-up queries (e.g., *"What about Colombia?"* -> *"What was Nubank's customer growth in Colombia in 4Q25?"*) based on recent conversation context before hitting `pgvector`.
+- [X] **5.3 Conversational API Endpoint Update:**
+  - Update `POST /api/v1/filings/query` to accept an optional `thread_id` (generating a UUID if none is provided).
+  - Return the session `thread_id` alongside the insight so clients can continue the conversation seamlessly.
+- [ ] **5.4 Interactive Executive Chat Interface (Streamlit):**
+  - Build a sleek, single-page corporate dashboard (`app/frontend/ui.py`):
+    - Multi-turn chat bubble interface (`st.chat_message`).
+    - Expandable citation drawers displaying source documents, page numbers, and exact quotes.
+    - Quarter selector filter and "New Session" thread reset button.
+    - Direct integration with our running FastAPI backend over HTTP.
 
 ---
 
-## 🎯 Progress Tracker
+### 🐳 Phase 6: Containerization, Cloud Deployment & Showcase
+> **Goal:** Deliver a showcase-ready, containerized system that can be launched with a single command or accessed via the cloud.
+
+- [ ] **6.1 Production Dockerization:**
+  - Multi-stage `Dockerfile` leveraging `uv` for minimal image footprints and caching.
+  - `docker-compose.yml` linking the FastAPI backend, the Streamlit frontend, and the Supabase network.
+- [ ] **6.2 Cloud Deployment:**
+  - Deploy backend and frontend services (Render / Railway / Hugging Face Spaces).
+- [ ] **6.3 Executive README & Portfolio Presentation:**
+  - Business problem narrative, system architecture diagram, embedded LangSmith evaluation screenshots, and quick-start instructions.
+
+---
+
+## 🎯 Updated Progress Tracker
 - [x] Phase 0: Foundations & Connections
-- [x] Phase 1: Ingestion & Vector Storage
-- [x] Phase 2: LangGraph Agentic Pipeline
-- [x] Phase 3: FastAPI Backend
-- [x] Phase 4: Pytest Suite
-- [ ] Phase 5: Docker & Cloud Deployment
+- [x] Phase 1: Ingestion & Vector Storage (pgvector + Supabase)
+- [x] Phase 2: LangGraph Agentic Pipeline & LangSmith Tracing
+- [x] Phase 3: FastAPI Backend & Swagger UI
+- [x] Phase 4: Pytest Suite & Retrieval Golden Dataset Benchmark
+- [ ] Phase 5: Conversational Memory & Streamlit Chat Interface
+- [ ] Phase 6: Containerization, Deployment & Showcase

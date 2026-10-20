@@ -1,30 +1,36 @@
+import uuid
 from fastapi import APIRouter, HTTPException, status
+from langchain_core.runnables import RunnableConfig
+
 from app.models.schemas import QueryRequest, QueryResponse
 from app.services.agent_state import AgentState
 from app.services.graph_builder import build_rag_graph
 
 router = APIRouter()
 
-# Compile the LangGraph agent once during startup so it's ready for requests
+# Compile the LangGraph agent once during startup with checkpointer enabled
 rag_agent = build_rag_graph()
 
 @router.post("/query", response_model=QueryResponse, status_code=status.HTTP_200_OK)
 def query_filings(request: QueryRequest):
     """
-    Submits a business query to the Agentic RAG workflow.
-    Evaluates context via Groq, synthesizes insights via Gemini, and enforces citations.
+    Submits a business query to the Conversational Agentic RAG workflow.
+    Tracks session history across turns via thread_id, reformulates follow-ups,
+    and returns verified citations.
     """
     try:
-        initial_state: AgentState = {
+        # 1. Reuse existing thread_id or generate a fresh UUID for new conversations
+        thread_id = request.thread_id or str(uuid.uuid4())
+        session_config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+        # 2. Package state payload
+        state_input: AgentState = {
             "query": request.query,
-            "fiscal_filter": request.fiscal_filter,
-            "documents": [],
-            "relevant_documents": [],
-            "final_insight": None
+            "fiscal_filter": request.fiscal_filter
         }
         
-        # Invoke our LangGraph pipeline
-        result = rag_agent.invoke(initial_state)
+        # 3. Invoke our LangGraph pipeline with session memory
+        result = rag_agent.invoke(state_input, config=session_config)
         insight = result.get("final_insight")
         
         if not insight:
@@ -36,6 +42,7 @@ def query_filings(request: QueryRequest):
         return QueryResponse(
             query=request.query,
             fiscal_filter=request.fiscal_filter,
+            thread_id=thread_id,
             insight=insight
         )
     except Exception as e:
