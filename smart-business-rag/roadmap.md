@@ -129,12 +129,12 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 ### 🐳 Phase 6: Containerization, Cloud Deployment & Showcase
 > **Goal:** Deliver a showcase-ready, containerized system that can be launched with a single command or accessed via the cloud.
 
-- [ ] **6.1 Production Dockerization:**
+- [X] **6.1 Production Dockerization:**
   - Multi-stage `Dockerfile` leveraging `uv` for minimal image footprints and caching.
   - `docker-compose.yml` linking the FastAPI backend, the Streamlit frontend, and the Supabase network.
-- [ ] **6.2 Cloud Deployment:**
+- [X] **6.2 Cloud Deployment:**
   - Deploy backend and frontend services (Render / Railway / Hugging Face Spaces).
-- [ ] **6.3 Executive README & Portfolio Presentation:**
+- [X] **6.3 Executive README & Portfolio Presentation:**
   - Business problem narrative, system architecture diagram, embedded LangSmith evaluation screenshots, and quick-start instructions.
 
 ---
@@ -145,5 +145,5 @@ An enterprise-oriented Decision Support System designed to analyze unstructured 
 - [x] Phase 2: LangGraph Agentic Pipeline & LangSmith Tracing
 - [x] Phase 3: FastAPI Backend & Swagger UI
 - [x] Phase 4: Pytest Suite & Retrieval Golden Dataset Benchmark
-- [ ] Phase 5: Conversational Memory & Streamlit Chat Interface
-- [ ] Phase 6: Containerization, Deployment & Showcase
+- [x] Phase 5: Conversational Memory & Streamlit Chat Interface
+- [x] Phase 6: Containerization, Deployment & Showcase
