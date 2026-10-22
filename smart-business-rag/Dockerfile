@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock* ./
 
 # Install project dependencies using uv sync
-RUN uv sync --frozen --no-install-project
+RUN uv sync --python 3.11 --frozen --no-install-project
 
 # Copy application source code
 COPY app/ ./app/
