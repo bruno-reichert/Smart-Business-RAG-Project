@@ -1,5 +1,5 @@
 # Use official lightweight Python image
-FROM python:3.11-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 # Install uv directly from Astral's official binary distribution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock* ./
 
 # Install project dependencies using uv sync
-RUN uv sync --python 3.11 --frozen --no-install-project
+RUN uv sync --python 3.13 --frozen --no-install-project
 
 # Copy application source code
 COPY app/ ./app/
