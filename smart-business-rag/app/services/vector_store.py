@@ -3,8 +3,9 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import PGVector
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
 
 load_dotenv()
 
@@ -15,15 +16,9 @@ if not _db_url:
 DATABASE_URL: str = _db_url
 COLLECTION_NAME = "nubank_filings_collection"
 
-def get_embeddings_model() -> HuggingFaceEmbeddings:
-    """
-    Initializes a lightweight local embedding model.
-    Runs locally on your CPU with zero API calls and zero rate limits.
-    """
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True}
+def get_embeddings_model() -> FastEmbedEmbeddings:
+    return FastEmbedEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
 def get_vector_store() -> PGVector:
