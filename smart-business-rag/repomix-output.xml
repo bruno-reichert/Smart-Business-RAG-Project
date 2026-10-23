@@ -1,0 +1,2210 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+app/
+  api/
+    v1/
+      endpoints/
+        __init__.py
+        documents.py
+        health.py
+        query.py
+      __init__.py
+      router.py
+    __init__.py
+  core/
+    __init__.py
+    config.py
+  frontend/
+    ui.py
+  models/
+    __init__.py
+    schemas.py
+  services/
+    __init__.py
+    agent_state.py
+    chunker.py
+    graph_builder.py
+    pdf_loader.py
+    rag_nodes.py
+    vector_store.py
+  __init__.py
+  main.py
+data/
+  nubank-2q25.pdf
+  nubank-3q25.pdf
+  nubank-4q25.pdf
+tests/
+  __init__.py
+  evaluate_retrieval.py
+  run_agent_test.py
+  run_ingestion_and_search.py
+  run_langsmith_eval.py
+  test_api.py
+  test_connections.py
+  test_db.py
+  test_extraction.py
+  test_multi_turn.py
+  test_unit.py
+  upload_langsmith_dataset.py
+.dockerignore
+.python-version
+docker-compose.yml
+Dockerfile
+main.py
+pyproject.toml
+README.md
+requirements.txt
+roadmap.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="app/api/v1/endpoints/__init__.py">
+
+</file>
+
+<file path="app/api/v1/endpoints/documents.py">
+import shutil
+from pathlib import Path
+from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from app.models.schemas import DocumentUploadResponse
+from app.services.pdf_loader import load_pdf_with_metadata
+from app.services.chunker import chunk_documents
+from app.services.vector_store import index_documents
+
+router = APIRouter()
+UPLOAD_DIR = Path("data")
+
+@router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(file: UploadFile = File(...)):
+    """
+    Uploads a new quarterly corporate PDF, extracts its text page-by-page,
+    chunks it, and indexes vector embeddings directly into Supabase.
+    """
+    if not file.filename or not file.filename.endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are supported."
+        )
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = UPLOAD_DIR / file.filename
+
+    # Save uploaded file to disk
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save file: {e}"
+        )
+
+    # Process through pipeline
+    try:
+        pages = load_pdf_with_metadata(str(file_path))
+        chunks = chunk_documents(pages, chunk_size=800, chunk_overlap=150)
+        index_documents(chunks)
+        
+        return DocumentUploadResponse(
+            filename=file.filename,
+            pages_extracted=len(pages),
+            chunks_indexed=len(chunks),
+            message="Document successfully processed and indexed into vector store."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process and index document: {e}"
+        )
+</file>
+
+<file path="app/api/v1/endpoints/health.py">
+from fastapi import APIRouter, status
+from sqlalchemy import create_engine, text
+from app.core.config import settings
+from app.models.schemas import HealthResponse
+
+router = APIRouter()
+
+@router.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
+def check_health():
+    """Verifies that the API service and Supabase PostgreSQL connection are alive."""
+    db_alive = False
+    try:
+        engine = create_engine(settings.DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+            db_alive = True
+    except Exception as e:
+        print(f"Health check DB error: {e}")
+
+    return HealthResponse(
+        status="healthy" if db_alive else "degraded",
+        database_connected=db_alive,
+        version=settings.VERSION
+    )
+</file>
+
+<file path="app/api/v1/endpoints/query.py">
+import uuid
+from fastapi import APIRouter, HTTPException, status
+from langchain_core.runnables import RunnableConfig
+
+from app.models.schemas import QueryRequest, QueryResponse
+from app.services.agent_state import AgentState
+from app.services.graph_builder import build_rag_graph
+
+router = APIRouter()
+
+# Compile the LangGraph agent once during startup with checkpointer enabled
+rag_agent = build_rag_graph()
+
+@router.post("/query", response_model=QueryResponse, status_code=status.HTTP_200_OK)
+def query_filings(request: QueryRequest):
+    """
+    Submits a business query to the Conversational Agentic RAG workflow.
+    Tracks session history across turns via thread_id, reformulates follow-ups,
+    and returns verified citations.
+    """
+    try:
+        # 1. Reuse existing thread_id or generate a fresh UUID for new conversations
+        thread_id = request.thread_id or str(uuid.uuid4())
+        session_config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+        # 2. Package state payload
+        state_input: AgentState = {
+            "query": request.query,
+            "fiscal_filter": request.fiscal_filter
+        }
+        
+        # 3. Invoke our LangGraph pipeline with session memory
+        result = rag_agent.invoke(state_input, config=session_config)
+        insight = result.get("final_insight")
+        
+        if not insight:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Workflow failed to generate an insight."
+            )
+            
+        return QueryResponse(
+            query=request.query,
+            fiscal_filter=request.fiscal_filter,
+            thread_id=thread_id,
+            insight=insight
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error executing agent query: {str(e)}"
+        )
+</file>
+
+<file path="app/api/v1/__init__.py">
+
+</file>
+
+<file path="app/api/v1/router.py">
+from fastapi import APIRouter
+from app.api.v1.endpoints import health, query, documents
+
+api_router = APIRouter()
+
+api_router.include_router(health.router, tags=["System Health"])
+api_router.include_router(query.router, prefix="/filings", tags=["Agentic RAG Query"])
+api_router.include_router(documents.router, prefix="/documents", tags=["Document Ingestion"])
+</file>
+
+<file path="app/api/__init__.py">
+
+</file>
+
+<file path="app/core/__init__.py">
+
+</file>
+
+<file path="app/core/config.py">
+from typing import Optional
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Smart Business Operations RAG API"
+    VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api/v1"
+
+    # API Keys & Secrets - Defaulting to empty str or Field(...) satisfies Pylance
+    GOOGLE_API_KEY: str = Field(default="", description="Google AI Studio API Key")
+    GROQ_API_KEY: str = Field(default="", description="Groq API Key")
+    DATABASE_URL: str = Field(default="", description="PostgreSQL Connection URI")
+    
+    # LangSmith Observability
+    LANGCHAIN_TRACING_V2: Optional[str] = "true"
+    LANGCHAIN_ENDPOINT: Optional[str] = "https://api.smith.langchain.com"
+    LANGCHAIN_API_KEY: Optional[str] = None
+    LANGCHAIN_PROJECT: Optional[str] = "smart-business-rag-v1"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+settings = Settings()
+</file>
+
+<file path="app/frontend/ui.py">
+import os
+import uuid
+import requests
+import streamlit as st
+
+# Configure page settings
+st.set_page_config(
+    page_title="Smart Business Operations RAG",
+    page_icon="💼",
+    layout="wide"
+)
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1")
+
+# --- SESSION STATE INITIALIZATION ---
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+# --- SIDEBAR CONTROLS ---
+with st.sidebar:
+    st.title("💼 Ops Intelligence")
+    st.caption("Grounded Executive Decision Support")
+    st.divider()
+
+    # Session Management
+    st.subheader("Conversation Session")
+    st.code(st.session_state.thread_id, language="text")
+    if st.button("🔄 New Conversation", use_container_width=True):
+        st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.messages = []
+        st.rerun()
+
+    st.divider()
+
+    # Metadata Filter
+    st.subheader("Search Scope")
+    quarter_filter = st.selectbox(
+        "Fiscal Quarter Filter",
+        options=["All Quarters", "2Q25", "3Q25", "4Q25"],
+        index=0
+    )
+    filter_value = None if quarter_filter == "All Quarters" else quarter_filter
+
+    st.divider()
+
+    # Document Upload Section
+    st.subheader("Add Quarterly Filings")
+    uploaded_file = st.file_uploader("Upload PDF report", type=["pdf"])
+    if uploaded_file is not None:
+        if st.button("Upload & Index", use_container_width=True):
+            with st.spinner("Processing document and generating embeddings..."):
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+                try:
+                    res = requests.post(f"{API_BASE_URL}/documents/upload", files=files)
+                    if res.status_code == 201:
+                        data = res.json()
+                        st.success(f"Indexed {data['pages_extracted']} pages ({data['chunks_indexed']} chunks)!")
+                    else:
+                        st.error(f"Upload failed: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+
+
+# --- MAIN CHAT INTERFACE ---
+st.title("📊 Corporate Operations Copilot")
+st.markdown("Ask financial and operational questions backed by **traceable, page-level citations** from quarterly filings.")
+
+# Render existing chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "citations" in message and message["citations"]:
+            with st.expander(f"📑 View Citations ({len(message['citations'])})"):
+                for idx, c in enumerate(message["citations"], start=1):
+                    st.markdown(f"**[{idx}] {c['document']} — Page {c['page']}**")
+                    st.caption(f"> \"{c['quote']}\"")
+
+# Chat input prompt
+if user_prompt := st.chat_input("Ask an operational or financial question..."):
+    # 1. Display user prompt
+    st.session_state.messages.append({"role": "user", "content": user_prompt})
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+
+    # 2. Call FastAPI backend
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing filings with Groq & Gemini..."):
+            payload = {
+                "query": user_prompt,
+                "fiscal_filter": filter_value,
+                "thread_id": st.session_state.thread_id
+            }
+            try:
+                response = requests.post(f"{API_BASE_URL}/filings/query", json=payload)
+                if response.status_code == 200:
+                    result = response.json()
+                    insight = result["insight"]
+                    answer = insight["answer"]
+                    citations = insight.get("citations", [])
+
+                    # Render answer
+                    st.markdown(answer)
+
+                    # Render citations dropdown
+                    if citations:
+                        with st.expander(f"📑 View Citations ({len(citations)})"):
+                            for idx, c in enumerate(citations, start=1):
+                                st.markdown(f"**[{idx}] {c['document']} — Page {c['page']}**")
+                                st.caption(f"> \"{c['quote']}\"")
+
+                    # Save to session history
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "citations": citations
+                    })
+                else:
+                    st.error(f"API Error ({response.status_code}): {response.text}")
+            except Exception as e:
+                st.error(f"Could not connect to FastAPI server at `{API_BASE_URL}`. Is it running?")
+</file>
+
+<file path="app/models/__init__.py">
+
+</file>
+
+<file path="app/models/schemas.py">
+import uuid
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+# --- CITATION & CORE INSIGHT MODELS ---
+class Citation(BaseModel):
+    """Represents an auditable source citation from a filing."""
+    document: str = Field(description="The source file name, e.g., 'nubank-3q25.pdf'")
+    page: int = Field(description="The exact 1-indexed page number in the filing")
+    quote: str = Field(description="The exact snippet or metric quoted from the text")
+
+class OperationalInsight(BaseModel):
+    """The structured output generated by the financial synthesis engine."""
+    answer: str = Field(description="Executive summary answering the user query.")
+    citations: List[Citation] = Field(default_factory=list, description="List of source citations.")
+    is_grounded: bool = Field(default=True, description="Whether the answer is backed by documents.")
+
+# --- API SPECIFIC SCHEMAS ---
+class QueryRequest(BaseModel):
+    """Payload sent by the client when asking a business question."""
+    query: str = Field(
+        min_length=3,
+        description="The business/operational question to ask",
+        examples=["What are Nubank's customer growth metrics in Mexico?"]
+    )
+    fiscal_filter: Optional[str] = Field(
+        default=None,
+        description="Filter by quarter (e.g. 3Q25, 4Q25)",
+        examples=["4Q25"]
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Optional session ID for conversational memory. If omitted, a new session is generated.",
+        examples=["session-abc-123"]
+    )
+
+class QueryResponse(BaseModel):
+    """Standardized API response containing the insight, thread ID, and execution metadata."""
+    query: str
+    fiscal_filter: Optional[str]
+    thread_id: str = Field(description="Active session thread ID for subsequent follow-up queries.")
+    insight: OperationalInsight
+
+class DocumentUploadResponse(BaseModel):
+    """Response returned after processing and embedding a PDF."""
+    filename: str
+    pages_extracted: int
+    chunks_indexed: int
+    message: str
+
+class HealthResponse(BaseModel):
+    """System health check payload."""
+    status: str
+    database_connected: bool
+    version: str
+</file>
+
+<file path="app/services/__init__.py">
+
+</file>
+
+<file path="app/services/agent_state.py">
+from typing import List, Optional, Sequence, Annotated
+from typing_extensions import TypedDict
+from langchain_core.messages import BaseMessage
+from langchain_core.documents import Document
+from langgraph.graph.message import add_messages
+from app.models.schemas import OperationalInsight
+
+class AgentState(TypedDict, total=False):
+    """
+    Represents the internal state of the conversational LangGraph workflow.
+    `messages` uses `add_messages` to automatically append new conversation turns.
+    """
+    messages: Annotated[Sequence[BaseMessage], add_messages] # Multi-turn conversation history
+    query: str                                              # Current user question (or reformulated query)
+    fiscal_filter: Optional[str]                            # Metadata filter (e.g., '3Q25')
+    documents: List[Document]                               # Chunks retrieved from pgvector
+    relevant_documents: List[Document]                      # Chunks that passed Groq's relevance test
+    final_insight: Optional[OperationalInsight]                # Synthesized output with citations
+</file>
+
+<file path="app/services/chunker.py">
+from typing import List
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+def get_text_splitter(chunk_size: int = 1000, chunk_overlap: int = 150) -> RecursiveCharacterTextSplitter:
+    """
+    Creates a text splitter configured for narrative and semi-structured business text.
+    It splits by double newlines (paragraphs) first, then single newlines, then spaces.
+    """
+    return RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ". ", " ", ""],
+        length_function=len
+    )
+
+def chunk_documents(documents: List[Document], chunk_size: int = 1000, chunk_overlap: int = 150) -> List[Document]:
+    """
+    Splits a list of page-level Documents into smaller chunk-level Documents,
+    automatically preserving parent metadata and appending chunk index tracking.
+    """
+    splitter = get_text_splitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    chunks = splitter.split_documents(documents)
+    
+    # Enrich chunks with a unique chunk ID relative to its document
+    for idx, chunk in enumerate(chunks):
+        chunk.metadata["chunk_index"] = idx
+        
+    print(f"Split {len(documents)} source pages into {len(chunks)} searchable chunks.")
+    return chunks
+</file>
+
+<file path="app/services/graph_builder.py">
+from typing import Literal
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+
+from app.services.agent_state import AgentState
+from app.services.rag_nodes import (
+    reformulate_query_node,
+    retrieve_node,
+    grade_documents_node,
+    generate_node,
+    fallback_node,
+)
+
+
+def decide_to_generate(state: AgentState) -> Literal["generate", "fallback"]:
+    """Conditional Edge / Guardrail based on verified document relevance."""
+    relevant_docs = state.get("relevant_documents", [])
+    
+    if not relevant_docs:
+        print("[Router] Decision: 0 relevant documents found -> Routing to FALLBACK.")
+        return "fallback"
+    
+    print(f"[Router] Decision: {len(relevant_docs)} relevant document(s) verified -> Routing to GENERATE.")
+    return "generate"
+
+
+def build_rag_graph():
+    """Compiles the conversational RAG workflow with state checkpointing."""
+    workflow = StateGraph(AgentState)
+
+    # 1. Add all nodes
+    workflow.add_node("reformulate_query", reformulate_query_node)
+    workflow.add_node("retrieve", retrieve_node)
+    workflow.add_node("grade_documents", grade_documents_node)
+    workflow.add_node("generate", generate_node)
+    workflow.add_node("fallback", fallback_node)
+
+    # 2. Sequential flow: START -> reformulate_query -> retrieve -> grade_documents
+    workflow.add_edge(START, "reformulate_query")
+    workflow.add_edge("reformulate_query", "retrieve")
+    workflow.add_edge("retrieve", "grade_documents")
+
+    # 3. Conditional routing from grade_documents
+    workflow.add_conditional_edges(
+        "grade_documents",
+        decide_to_generate,
+        {
+            "generate": "generate",
+            "fallback": "fallback"
+        }
+    )
+
+    # 4. Terminal edges
+    workflow.add_edge("generate", END)
+    workflow.add_edge("fallback", END)
+
+    # 5. Attach in-memory checkpointer for thread persistence
+    checkpointer = MemorySaver()
+
+    app = workflow.compile(checkpointer=checkpointer)
+    return app
+</file>
+
+<file path="app/services/pdf_loader.py">
+import os
+import re
+from pathlib import Path
+from typing import List, Dict, Any
+from pypdf import PdfReader
+from langchain_core.documents import Document
+
+def extract_metadata_from_filename(filename: str) -> Dict[str, str]:
+    """
+    Infers company and fiscal period from conventional filenames
+    e.g., 'nubank-3q25.pdf' -> {'company': 'Nubank', 'fiscal_period': '3Q25'}
+    """
+    clean_name = Path(filename).stem.lower()
+    
+    # Default values
+    metadata = {
+        "company": "Nubank",
+        "fiscal_period": "Unknown",
+        "source_file": Path(filename).name
+    }
+    
+    # Extract quarter pattern like 1q24, 3q25, 4q23
+    quarter_match = re.search(r"(\d[qQ]\d{2})", clean_name)
+    if quarter_match:
+        metadata["fiscal_period"] = quarter_match.group(1).upper()
+        
+    if "nubank" in clean_name or "nu" in clean_name:
+        metadata["company"] = "Nubank"
+        
+    return metadata
+
+def clean_text(text: str) -> str:
+    """
+    Basic text sanitation: handles erratic whitespace from PDF extractions.
+    """
+    if not text:
+        return ""
+    # Replace multiple consecutive spaces/newlines with single ones
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+def load_pdf_with_metadata(file_path: str) -> List[Document]:
+    """
+    Extracts text page by page from a PDF and returns LangChain Document objects
+    enriched with page numbers and document-level metadata.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+        
+    doc_metadata = extract_metadata_from_filename(path.name)
+    reader = PdfReader(str(path))
+    documents: List[Document] = []
+    
+    print(f"Loading '{path.name}' ({len(reader.pages)} pages)...")
+    
+    for page_idx, page in enumerate(reader.pages):
+        raw_text = page.extract_text() or ""
+        cleaned_page_text = clean_text(raw_text)
+        
+        # Skip empty pages (e.g. blank spacer pages)
+        if not cleaned_page_text:
+            continue
+            
+        page_metadata: Dict[str, Any] = {
+            "source": path.name,
+            "company": doc_metadata["company"],
+            "fiscal_period": doc_metadata["fiscal_period"],
+            "page": page_idx + 1,  # 1-indexed for human readability
+            "total_pages": len(reader.pages)
+        }
+        
+        documents.append(
+            Document(page_content=cleaned_page_text, metadata=page_metadata)
+        )
+        
+    print(f"-> Extracted {len(documents)} text pages from {path.name}.")
+    return documents
+</file>
+
+<file path="app/services/rag_nodes.py">
+import os
+import json
+from typing import Dict, Any, List, cast
+from dotenv import load_dotenv
+
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_core.documents import Document
+from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+from app.services.agent_state import AgentState
+from app.services.vector_store import similarity_search_with_metadata
+from app.models.schemas import OperationalInsight, Citation
+
+load_dotenv()
+
+# 1. Initialize our Dual-Engine LLMs
+# Groq: For ultra-fast micro-evaluations
+groq_llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    temperature=0.0
+)
+
+# Gemini: For high-accuracy synthesis and structured output
+gemini_llm = ChatGoogleGenerativeAI(
+    model="gemini-3.5-flash",
+    temperature=0.0
+)
+
+# --- NODE 0: CONTEXTUAL QUERY REFORMULATOR (Groq) ---
+def reformulate_query_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Analyzes recent conversation history. If the user's latest query is a follow-up
+    or contains ambiguous pronouns (e.g., 'what about Colombia?'), Groq rewrites it
+    into a self-contained search query before vector retrieval.
+    """
+    messages = state.get("messages", [])
+    raw_query = state["query"]
+    
+    # If this is the very first turn (no prior messages), skip reformulation
+    if len(messages) <= 1:
+        print(f"[Node: Query Reformulator] First turn detected. Using raw query: '{raw_query}'")
+        return {
+            "query": raw_query,
+            "messages": [HumanMessage(content=raw_query)]
+        }
+
+    print(f"[Node: Query Reformulator] Context detected ({len(messages)} prior messages). Analyzing with Groq...")
+
+    # Format recent history for the rewriter (last 4 messages maximum to keep prompt lean)
+    recent_history = messages[-4:]
+    history_str = ""
+    for msg in recent_history:
+        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+        content_preview = str(msg.content)[:200]
+        history_str += f"{role}: {content_preview}\n"
+
+    system_prompt = (
+        "You are an expert query reformulation assistant for a financial research system.\n"
+        "Given the recent conversation history and a follow-up user query, rewrite the user query "
+        "into a standalone, unambiguous search query that can be used for semantic document retrieval.\n"
+        "CRITICAL RULES:\n"
+        "1. Do NOT answer the question. Only rewrite it.\n"
+        "2. If the user query is ALREADY standalone and unambiguous, return it EXACTLY as is.\n"
+        "3. Output ONLY the rewritten search query, with no quotation marks, preambles, or explanations."
+    )
+
+    user_prompt = (
+        f"Conversation History:\n{history_str}\n"
+        f"Latest User Query: {raw_query}\n\n"
+        f"Standalone Search Query:"
+    )
+
+    try:
+        response = groq_llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        
+        rewritten = str(response.content).strip().strip('"').strip("'")
+        print(f"[Node: Query Reformulator] Reformulated: '{raw_query}' -> '{rewritten}'")
+        return {
+            "query": rewritten,
+            "messages": [HumanMessage(content=raw_query)]
+        }
+    except Exception as e:
+        print(f"Warning: Query reformulation failed, falling back to raw query. Error: {e}")
+        return {
+            "query": raw_query,
+            "messages": [HumanMessage(content=raw_query)]
+        }
+
+# --- NODE 1: RETRIEVE ---
+def retrieve_node(state: AgentState) -> Dict[str, Any]:
+    """Retrieves candidate chunks from Supabase pgvector based on query & optional filter."""
+    query = state["query"]
+    fiscal_filter = state.get("fiscal_filter")
+    
+    filter_dict = {"fiscal_period": fiscal_filter} if fiscal_filter else None
+    
+    print(f"\n[Node: Retrieve] Searching Supabase for query: '{query}' (Filter: {filter_dict})")
+    retrieved_docs = similarity_search_with_metadata(query=query, k=4, filter_dict=filter_dict)
+    print(f"[Node: Retrieve] Found {len(retrieved_docs)} candidate chunks.")
+    
+    return {"documents": retrieved_docs}
+
+
+# --- NODE 2: GRADE DOCUMENTS (Groq) ---
+def grade_documents_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Evaluates retrieved chunks for relevance using Groq's high-speed inference.
+    Filters out background noise to prevent hallucinated answers.
+    """
+    query = state["query"]
+    documents = state["documents"]
+    
+    print(f"[Node: Grade Documents] Evaluating {len(documents)} chunks with Groq...")
+    
+    system_prompt = (
+        "You are an expert financial analyst assistant. Your task is to evaluate if a retrieved document "
+        "chunk contains information relevant to the user query.\n"
+        "Respond strictly with a JSON object with a single boolean field: {\"is_relevant\": true} or {\"is_relevant\": false}."
+    )
+    
+    relevant_docs: List[Document] = []
+    
+    for doc in documents:
+        user_prompt = f"User Query: {query}\n\nDocument Snippet:\n{doc.page_content}"
+        
+        try:
+            response = groq_llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ])
+            
+            # Simple cleanup to parse json response safely
+            raw_content = response.content
+            content = raw_content if isinstance(raw_content, str) else str(raw_content)
+            content = content.strip()
+            if "```" in content:
+                content = content.split("```")[1].replace("json", "").strip()
+            
+            parsed = json.loads(content)
+            if parsed.get("is_relevant", False):
+                relevant_docs.append(doc)
+        except Exception as e:
+            # Fallback: keep document if grading fails
+            print(f"Warning: Grading failed for chunk, keeping it. Error: {e}")
+            relevant_docs.append(doc)
+            
+    print(f"[Node: Grade Documents] {len(relevant_docs)} / {len(documents)} chunks determined relevant.")
+    return {"relevant_documents": relevant_docs}
+
+
+# --- NODE 3: GENERATE (Gemini) ---
+def generate_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Synthesizes the final executive insight using Gemini with structured Pydantic outputs.
+    Ensures every fact has a direct, page-level citation.
+    """
+    query = state["query"]
+    relevant_docs = state["relevant_documents"]
+    
+    print(f"[Node: Generate] Synthesizing executive answer with Gemini from {len(relevant_docs)} chunks...")
+    
+    # Format the context blocks with clear document & page provenance
+    context_blocks = []
+    for doc in relevant_docs:
+        meta = doc.metadata
+        context_blocks.append(
+            f"--- SOURCE: {meta.get('source', 'Unknown')} | PAGE: {meta.get('page', 0)} | QUARTER: {meta.get('fiscal_period', '')} ---\n"
+            f"{doc.page_content}\n"
+        )
+    formatted_context = "\n".join(context_blocks)
+    
+    prompt = (
+        f"You are a Senior Corporate Intelligence Analyst at Nubank.\n"
+        f"Answer the user query based ONLY on the following filing excerpts.\n"
+        f"Provide exact page-level citations for every single metric and claim mentioned.\n\n"
+        f"Context Excerpts:\n{formatted_context}\n\n"
+        f"User Query: {query}"
+    )
+    
+    # We bind the Pydantic schema directly to Gemini for deterministic structured output
+    structured_gemini = gemini_llm.with_structured_output(OperationalInsight)
+    
+    raw_insight = structured_gemini.invoke(prompt)
+    insight: OperationalInsight = cast(OperationalInsight, raw_insight)
+    print("[Node: Generate] Answer synthesized successfully with citations.")
+    
+    return {
+            "final_insight": insight,
+            "messages": [AIMessage(content=insight.answer)]
+        }
+
+# --- NODE 4: OUT OF BOUNDS / FALLBACK ---
+def fallback_node(state: AgentState) -> Dict[str, Any]:
+    """Gracefully handles queries when no relevant context was found in the filings."""
+    query = state["query"]
+    print("[Node: Fallback] No relevant documents found. Triggering ungrounded safety fallback.")
+    
+    fallback_insight = OperationalInsight(
+        answer=(
+            f"Based on the processed quarterly filings (3Q25 and 4Q25), there is no verifiable "
+            f"information available to answer: '{query}'. Please verify if the requested metric "
+            f"pertains to a different reporting period or company."
+        ),
+        citations=[],
+        is_grounded=False
+    )
+    return {
+        "final_insight": fallback_insight,
+        "messages": [AIMessage(content=fallback_insight.answer)]
+    }
+</file>
+
+<file path="app/services/vector_store.py">
+import os
+from typing import List, Optional
+from dotenv import load_dotenv
+
+from langchain_core.documents import Document
+from langchain_community.vectorstores import PGVector
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
+
+load_dotenv()
+
+_db_url = os.getenv("DATABASE_URL")
+if not _db_url:
+    raise ValueError("DATABASE_URL is missing in .env")
+
+DATABASE_URL: str = _db_url
+COLLECTION_NAME = "nubank_filings_collection"
+
+def get_embeddings_model() -> FastEmbedEmbeddings:
+    return FastEmbedEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+def get_vector_store() -> PGVector:
+    """Initializes PGVector connecting to Supabase PostgreSQL."""
+    embeddings = get_embeddings_model()
+    
+    return PGVector(
+        connection_string=DATABASE_URL,
+        embedding_function=embeddings,
+        collection_name=COLLECTION_NAME,
+        use_jsonb=True
+    )
+
+def index_documents(chunks: List[Document]) -> None:
+    """Stores and embeds a list of document chunks into Supabase."""
+    vector_store = get_vector_store()
+    print(f"Embedding and uploading {len(chunks)} chunks to Supabase...")
+    vector_store.add_documents(chunks)
+    print("Indexing complete! All embeddings are stored in Supabase.")
+
+def similarity_search_with_metadata(
+    query: str, 
+    k: int = 4, 
+    filter_dict: Optional[dict] = None
+) -> List[Document]:
+    """
+    Executes a semantic similarity search.
+    If a filter_dict is provided (e.g., {"fiscal_period": "4Q25"}),
+    it retrieves candidate chunks and filters them reliably without
+    triggering Postgres JSONPath version mismatches.
+    """
+    vector_store = get_vector_store()
+    
+    if not filter_dict:
+        # Standard search without filters
+        return vector_store.similarity_search(query, k=k)
+    
+    # Retrieve slightly more candidates to account for filtering
+    raw_results = vector_store.similarity_search(query, k=k * 3)
+    
+    # Filter candidates by matching metadata keys
+    filtered_results: List[Document] = []
+    for doc in raw_results:
+        matches = True
+        for key, expected_value in filter_dict.items():
+            if str(doc.metadata.get(key, "")).upper() != str(expected_value).upper():
+                matches = False
+                break
+        if matches:
+            filtered_results.append(doc)
+        if len(filtered_results) >= k:
+            break
+            
+    # If the filter was too restrictive and returned nothing, fallback to raw top results
+    return filtered_results if filtered_results else raw_results[:k]
+</file>
+
+<file path="app/__init__.py">
+
+</file>
+
+<file path="app/main.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.api.v1.router import api_router
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description="Enterprise Decision Support System powered by LangGraph, pgvector, and Dual-LLM (Groq + Gemini).",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS configuration (allows frontend clients to connect cleanly)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount all V1 API routes
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
+@app.get("/", tags=["Root"])
+def root():
+    return {
+        "message": "Smart Business Operations RAG API is operational.",
+        "docs_url": "/docs",
+        "health_check": f"{settings.API_V1_STR}/health"
+    }
+</file>
+
+<file path="tests/__init__.py">
+
+</file>
+
+<file path="tests/evaluate_retrieval.py">
+from typing import List, Dict, Any
+from app.services.vector_store import similarity_search_with_metadata
+
+# --- THE GOLDEN DATASET (Ground Truth) ---
+# 5 representative business questions with expected page/content targets
+GOLDEN_DATASET: List[Dict[str, Any]] = [
+    {
+        "id": 1,
+        "query": "What is Nubank's customer base size and activity rate in Brazil?",
+        "expected_quarter": "3Q25",
+        "expected_page": 1,
+        "expected_keywords": ["110 million", "85%"]
+    },
+    {
+        "id": 2,
+        "query": "What are the customer growth milestones in Mexico and Colombia?",
+        "expected_quarter": "3Q25",
+        "expected_page": 1,
+        "expected_keywords": ["13 million", "4 million"]
+    },
+    {
+        "id": 3,
+        "query": "What was Nubank's total credit portfolio size and growth rate?",
+        "expected_quarter": "3Q25",
+        "expected_page": 1,
+        "expected_keywords": ["30.4 billion", "42%"]
+    },
+    {
+        "id": 4,
+        "query": "What were the business highlights and new product launches across markets?",
+        "expected_quarter": "4Q25",
+        "expected_page": 3,
+        "expected_keywords": ["100 new products", "payroll loan"]
+    },
+    {
+        "id": 5,
+        "query": "How is Nubank positioned relative to private financial institutions in Brazil?",
+        "expected_quarter": "4Q25",
+        "expected_page": 1,
+        "expected_keywords": ["largest private", "Central Bank"]
+    }
+]
+
+
+def run_retrieval_benchmark(k: int = 4):
+    print("=" * 65)
+    print("🎯 RUNNING RETRIEVAL EVALUATION BENCHMARK (Golden Dataset)")
+    print("=" * 65)
+    
+    hits = 0
+    keyword_matches = 0
+    total = len(GOLDEN_DATASET)
+
+    for item in GOLDEN_DATASET:
+        q_id = item["id"]
+        query = item["query"]
+        expected_page = item["expected_page"]
+        expected_quarter = item["expected_quarter"]
+        keywords = item["expected_keywords"]
+
+        print(f"\n[Q{q_id}] Query: \"{query}\"")
+        
+        # Perform retrieval
+        retrieved_docs = similarity_search_with_metadata(query=query, k=k)
+        
+        # Check if expected document page is in top-k
+        hit_found = False
+        keyword_found = False
+
+        for doc in retrieved_docs:
+            meta = doc.metadata
+            content = doc.page_content.lower()
+
+            # Check page provenance hit
+            if meta.get("page") == expected_page and meta.get("fiscal_period") == expected_quarter:
+                hit_found = True
+
+            # Check keyword hit
+            for kw in keywords:
+                if kw.lower() in content:
+                    keyword_found = True
+                    break
+
+        if hit_found:
+            hits += 1
+            print(f"  ✅ Page Provenance HIT: Found {expected_quarter} Page {expected_page}")
+        else:
+            print(f"  ❌ Page Provenance MISS: Expected {expected_quarter} Page {expected_page}")
+
+        if keyword_found:
+            keyword_matches += 1
+            print(f"  ✅ Keyword HIT: Matched target business metrics")
+        else:
+            print(f"  ❌ Keyword MISS: Missing expected terms {keywords}")
+
+    # Calculate metrics
+    hit_rate = (hits / total) * 100
+    keyword_recall = (keyword_matches / total) * 100
+
+    print("\n" + "=" * 65)
+    print("📊 BENCHMARK RESULTS SUMMARY")
+    print("=" * 65)
+    print(f"Total Test Cases:            {total}")
+    print(f"Page-Level Hit Rate (Top-{k}): {hit_rate:.1f}% ({hits}/{total})")
+    print(f"Keyword Recall (Top-{k}):     {keyword_recall:.1f}% ({keyword_matches}/{total})")
+    print("=" * 65)
+
+    assert hit_rate >= 80.0, f"Hit rate dropped below 80%! Got {hit_rate}%"
+    print("🎉 BENCHMARK PASSED: Retrieval pipeline meets enterprise standards!")
+
+
+if __name__ == "__main__":
+    run_retrieval_benchmark()
+</file>
+
+<file path="tests/run_agent_test.py">
+import json
+from dotenv import load_dotenv
+from app.services.graph_builder import build_rag_graph
+from app.services.agent_state import AgentState
+
+load_dotenv()
+
+def print_result(title: str, result: dict):
+    print("\n" + "=" * 60)
+    print(f"📌 {title.upper()}")
+    print("=" * 60)
+    
+    insight = result.get("final_insight")
+    if not insight:
+        print("No insight generated.")
+        return
+
+    print(f"\n🧠 EXECUTIVE ANSWER:\n{insight.answer}\n")
+    print(f"🛡️ GROUNDED IN FILINGS: {insight.is_grounded}")
+    
+    print(f"\n📑 CITATIONS ({len(insight.citations)} found):")
+    for idx, c in enumerate(insight.citations, start=1):
+        print(f"  [{idx}] Document: {c.document} | Page: {c.page}")
+        print(f"      Quote: \"{c.quote}\"\n")
+
+
+def main():
+    print("Compiling LangGraph Workflow...")
+    agent = build_rag_graph()
+
+    # --- TEST 1: Valid Financial & Operational Question ---
+    print("\n>>> RUNNING TEST 1: Valid Operational Query <<<")
+    state_input_1: AgentState = {
+        "query": "What are Nubank's key operational achievements in Mexico and Colombia?",
+        "fiscal_filter": None,
+        "documents": [],
+        "relevant_documents": [],
+        "final_insight": None
+    }
+    
+    result_1 = agent.invoke(state_input_1)
+    print_result("Test 1 Result", result_1)
+
+    # --- TEST 2: Out-of-Scope / Irrelevant Question ---
+    print("\n>>> RUNNING TEST 2: Irrelevant / Out-of-Scope Query <<<")
+    state_input_2: AgentState = {
+        "query": "What are the specs of the rocket engine used by SpaceX to reach Mars?",
+        "fiscal_filter": None,
+        "documents": [],
+        "relevant_documents": [],
+        "final_insight": None
+    }
+    
+    result_2 = agent.invoke(state_input_2)
+    print_result("Test 2 Result", result_2)
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="tests/run_ingestion_and_search.py">
+from pathlib import Path
+from app.services.pdf_loader import load_pdf_with_metadata
+from app.services.chunker import chunk_documents
+from app.services.vector_store import index_documents, similarity_search_with_metadata
+
+def main():
+    print("=== Step 1: Loading PDFs ===")
+    data_dir = Path("data")
+    pdf_files = list(data_dir.glob("*.pdf"))
+    
+    all_pages = []
+    for pdf_path in pdf_files:
+        pages = load_pdf_with_metadata(str(pdf_path))
+        all_pages.extend(pages)
+        
+    print(f"Total pages: {len(all_pages)}")
+
+    print("\n=== Step 2: Splitting into Chunks ===")
+    chunks = chunk_documents(all_pages, chunk_size=800, chunk_overlap=150)
+
+    print("\n=== Step 3: Indexing into Supabase pgvector ===")
+    index_documents(chunks)
+
+    print("\n=== Step 4: Testing Semantic Retrieval ===")
+    test_query = "What is Nubank's customer growth and activity rate in Brazil?"
+    print(f"Query: '{test_query}'\n")
+    
+    results = similarity_search_with_metadata(test_query, k=2)
+    
+    for i, doc in enumerate(results):
+        print(f"--- MATCH {i + 1} ---")
+        print(f"Source: {doc.metadata.get('source')} | Quarter: {doc.metadata.get('fiscal_period')} | Page: {doc.metadata.get('page')}")
+        print("Content preview:")
+        print(doc.page_content[:250] + "...\n")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="tests/run_langsmith_eval.py">
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+load_dotenv()
+
+# Safe API key check
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY")
+if not LANGSMITH_API_KEY:
+    raise ValueError("Neither LANGSMITH_API_KEY nor LANGCHAIN_API_KEY is set in .env!")
+os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
+
+from langsmith import evaluate
+from app.services.graph_builder import build_rag_graph
+from app.services.agent_state import AgentState
+
+agent = build_rag_graph()
+
+def target_pipeline(inputs: dict) -> dict:
+    """The function LangSmith calls for each example in the dataset."""
+    query = inputs["query"]
+    state_input: AgentState = {
+        "query": query,
+        "fiscal_filter": None,
+        "documents": [],
+        "relevant_documents": [],
+        "final_insight": None
+    }
+    
+    result = agent.invoke(state_input)
+    insight = result.get("final_insight")
+    
+    return {
+        "answer": insight.answer if insight else "No answer",
+        "is_grounded": insight.is_grounded if insight else False,
+        "citations_count": len(insight.citations) if insight else 0
+    }
+
+def grounding_evaluator(run, example) -> dict:
+    """Evaluates whether the system marked the output as grounded with citations."""
+    is_grounded = run.outputs.get("is_grounded", False)
+    citations_count = run.outputs.get("citations_count", 0)
+    score = 1.0 if (is_grounded and citations_count > 0) else 0.0
+    return {"key": "grounded_with_citations", "score": score}
+
+def main():
+    print("🚀 Triggering LangSmith Cloud Evaluation Experiment...")
+    
+    experiment_results = evaluate(
+        target_pipeline,
+        data="nubank-operational-qa",
+        evaluators=[grounding_evaluator],
+        experiment_prefix="agentic-rag-benchmark",
+        max_concurrency=1  # Sequential execution to be gentle on free-tier rate limits
+    )
+    
+    print("\n✅ LangSmith Experiment Completed!")
+    print("Check your dashboard: https://smith.langchain.com -> Datasets & Experiments -> 'Experiments' tab!")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="tests/test_api.py">
+from fastapi.testclient import TestClient
+from unittest.mock import patch
+
+from app.main import app
+from app.models.schemas import OperationalInsight, Citation
+
+client = TestClient(app)
+
+
+def test_root_endpoint():
+    """GET / should return 200 OK with welcome message and docs URL."""
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert "message" in data
+    assert data["docs_url"] == "/docs"
+
+
+def test_health_endpoint():
+    """GET /api/v1/health should return 200 OK and valid health schema."""
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "database_connected" in data
+    assert "version" in data
+
+
+def test_query_validation_error():
+    """POST /api/v1/filings/query with a 2-letter query should fail with HTTP 422."""
+    payload = {"query": "ab"}  # Fails min_length=3 rule
+    response = client.post("/api/v1/filings/query", json=payload)
+    assert response.status_code == 422
+    errors = response.json()
+    assert "detail" in errors
+
+
+@patch("app.api.v1.endpoints.query.rag_agent.invoke")
+def test_query_success_with_mocked_agent(mock_invoke):
+    """
+    POST /api/v1/filings/query should return 200 OK with structured citations.
+    Uses a mock so this test runs instantly, offline, and spends 0 API tokens.
+    """
+    # 1. Configure the simulated agent return value
+    mock_insight = OperationalInsight(
+        answer="Nubank's customer base reached 110 million in Brazil.",
+        citations=[
+            Citation(
+                document="nubank-3q25.pdf",
+                page=1,
+                quote="With a customer base reaching 110 million"
+            )
+        ],
+        is_grounded=True
+    )
+    mock_invoke.return_value = {"final_insight": mock_insight}
+
+    # 2. Make the HTTP request
+    payload = {
+        "query": "What is Nubank's customer count?",
+        "fiscal_filter": "3Q25"
+    }
+    response = client.post("/api/v1/filings/query", json=payload)
+
+    # 3. Assertions
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == payload["query"]
+    assert data["fiscal_filter"] == "3Q25"
+    assert data["insight"]["is_grounded"] is True
+    assert len(data["insight"]["citations"]) == 1
+    assert data["insight"]["citations"][0]["page"] == 1
+</file>
+
+<file path="tests/test_connections.py">
+import os
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+
+# Load environment variables from .env
+load_dotenv()
+
+def test_models():
+    print("--- 1. Testing Google Gemini 3.5 Flash ---")
+    try:
+        gemini = ChatGoogleGenerativeAI(
+            model="gemini-3.5-flash",
+            temperature=0.0
+        )
+        gemini_response = gemini.invoke("Respond with exactly: 'Gemini 3.5 Flash is ready for business.'")
+        print(f"Success! Response: {gemini_response.content[0]['text']}\n")
+    except Exception as e:
+        print(f"Error testing Gemini: {e}\n")
+
+    print("--- 2. Testing Groq (gpt-oss-120b) ---")
+    try:
+        groq = ChatGroq(
+            model="openai/gpt-oss-120b",
+            temperature=0.0
+        )
+        groq_response = groq.invoke("Respond with exactly: 'Groq inference engine is online.'")
+        print(f"Success! Response: {groq_response.content.strip()}\n")
+    except Exception as e:
+        print(f"Error testing Groq: {e}\n")
+
+if __name__ == "__main__":
+    test_models()
+</file>
+
+<file path="tests/test_db.py">
+import os
+import sys
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def test_database() -> None:
+    # 1. Guard clause: Ensure DATABASE_URL is not None
+    if not DATABASE_URL:
+        print("Error: DATABASE_URL is not set in your .env file!")
+        sys.exit(1)
+
+    print("Testing connection to Supabase PostgreSQL...")
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            # Check Postgres version
+            res = conn.execute(text("SELECT version();")).fetchone()
+            
+            # 2. Guard clause: Ensure res is not None before subscripting
+            if res is not None:
+                version_str = str(res[0])
+                print(f"Connected! Postgres Version: {version_str[:40]}...")
+            else:
+                print("Connected, but could not read database version.")
+            
+            # Check if pgvector is enabled
+            vector_check = conn.execute(
+                text("SELECT extname FROM pg_extension WHERE extname = 'vector';")
+            ).fetchone()
+            
+            if vector_check is not None:
+                print("pgvector extension is ACTIVE and ready to store embeddings!")
+            else:
+                print("Warning: Connected, but 'vector' extension is NOT active yet.")
+                print("Run: 'CREATE EXTENSION IF NOT EXISTS vector;' in Supabase SQL editor.")
+                
+    except Exception as e:
+        print(f"Connection failed: {e}")
+
+if __name__ == "__main__":
+    test_database()
+</file>
+
+<file path="tests/test_extraction.py">
+from pathlib import Path
+from app.services.pdf_loader import load_pdf_with_metadata
+from app.services.chunker import chunk_documents
+
+def main():
+    data_dir = Path("data")
+    pdf_files = list(data_dir.glob("*.pdf"))
+    
+    if not pdf_files:
+        print("No PDF files found in data/ directory!")
+        return
+        
+    all_pages = []
+    for pdf_path in pdf_files:
+        pages = load_pdf_with_metadata(str(pdf_path))
+        all_pages.extend(pages)
+        
+    print(f"\n--- Total pages extracted: {len(all_pages)} ---")
+    
+    # Run the chunker
+    chunks = chunk_documents(all_pages, chunk_size=800, chunk_overlap=150)
+    
+    print("\n--- SAMPLE CHUNK (Index 0) ---")
+    print("Metadata:", chunks[0].metadata)
+    print("Content:\n" + chunks[0].page_content)
+    print("-" * 50)
+    
+    print("\n--- SAMPLE CHUNK (Index 1) ---")
+    print("Metadata:", chunks[1].metadata)
+    print("Content:\n" + chunks[1].page_content)
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="tests/test_multi_turn.py">
+from dotenv import load_dotenv
+from app.services.graph_builder import build_rag_graph
+from app.services.agent_state import AgentState
+from langchain_core.runnables import RunnableConfig
+
+
+load_dotenv()
+
+def main():
+    agent = build_rag_graph()
+    session_config: RunnableConfig = {"configurable": {"thread_id": "test-session-42"}}
+
+    print("=== TURN 1 ===")
+    q1 = "What is Nubank's customer growth in Mexico in 4Q25?"
+    input_1: AgentState = {"query": q1, "fiscal_filter": "4Q25"}
+    res1 = agent.invoke(input_1, config=session_config)
+    print(f"A1: {res1['final_insight'].answer[:150]}...\n")
+
+    print("=== TURN 2 (Follow-up with pronoun / missing context) ===")
+    q2 = "And what about Colombia in that same period?"
+    input_2: AgentState = {"query": q2, "fiscal_filter": "4Q25"}
+    res2 = agent.invoke(input_2, config=session_config)
+    print(f"A2: {res2['final_insight'].answer[:150]}...\n")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="tests/test_unit.py">
+import pytest
+from pydantic import ValidationError
+from langchain_core.documents import Document
+
+from app.services.pdf_loader import extract_metadata_from_filename, clean_text
+from app.services.chunker import chunk_documents
+from app.models.schemas import QueryRequest, Citation, OperationalInsight
+
+
+# ==========================================
+# 1. PDF Loader & Metadata Unit Tests
+# ==========================================
+def test_extract_metadata_standard_naming():
+    """Verifies that filename parsing correctly identifies company and quarter."""
+    meta = extract_metadata_from_filename("nubank-3q25.pdf")
+    assert meta["company"] == "Nubank"
+    assert meta["fiscal_period"] == "3Q25"
+    assert meta["source_file"] == "nubank-3q25.pdf"
+
+def test_extract_metadata_case_insensitivity():
+    """Ensures uppercase/lowercase variations still resolve quarters properly."""
+    meta = extract_metadata_from_filename("NuBank-4Q24.PDF")
+    assert meta["company"] == "Nubank"
+    assert meta["fiscal_period"] == "4Q24"
+
+def test_clean_text_normalizes_whitespace():
+    """Ensures erratic PDF spaces and repeated newlines are collapsed."""
+    raw = "Brazil   continues    to deliver.\n\n\n\nWith a customer base."
+    expected = "Brazil continues to deliver.\n\nWith a customer base."
+    assert clean_text(raw) == expected
+
+
+# ==========================================
+# 2. Text Chunker Unit Tests
+# ==========================================
+def test_chunk_documents_preserves_metadata():
+    """Verifies that chunks inherit page metadata and gain unique chunk indices."""
+    dummy_doc = Document(
+        page_content="Nubank active customers reached 110 million. " * 30,  # ~1350 characters
+        metadata={"source": "test.pdf", "page": 1, "fiscal_period": "3Q25", "company": "Nubank"}
+    )
+    
+    chunks = chunk_documents([dummy_doc], chunk_size=500, chunk_overlap=100)
+    
+    # Must split into multiple chunks
+    assert len(chunks) > 1
+    
+    # Each chunk must preserve the parent metadata and add chunk_index
+    for idx, c in enumerate(chunks):
+        assert c.metadata["source"] == "test.pdf"
+        assert c.metadata["page"] == 1
+        assert c.metadata["fiscal_period"] == "3Q25"
+        assert c.metadata["chunk_index"] == idx
+
+
+# ==========================================
+# 3. Pydantic Schema Validation Tests
+# ==========================================
+def test_query_request_valid():
+    """Valid payload should parse cleanly without errors."""
+    req = QueryRequest(query="What is the net income?", fiscal_filter="3Q25")
+    assert req.query == "What is the net income?"
+    assert req.fiscal_filter == "3Q25"
+
+def test_query_request_validation_failure():
+    """Queries under 3 characters must be rejected by Pydantic."""
+    with pytest.raises(ValidationError):
+        QueryRequest(query="hi")  # Violates min_length=3
+
+def test_operational_insight_schema():
+    """Verifies nested Citation models inside OperationalInsight."""
+    citation = Citation(document="test.pdf", page=2, quote="Growth was 15%")
+    insight = OperationalInsight(
+        answer="The growth achieved was strong.",
+        citations=[citation],
+        is_grounded=True
+    )
+    assert insight.is_grounded is True
+    assert len(insight.citations) == 1
+    assert insight.citations[0].page == 2
+</file>
+
+<file path="tests/upload_langsmith_dataset.py">
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Path safety
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from langsmith import Client
+
+load_dotenv()
+
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+if not LANGSMITH_API_KEY:
+    raise ValueError("LANGSMITH_API_KEY is missing from .env!")
+
+# Expanded Golden Dataset with business Q&A and target citations
+EXPANDED_GOLDEN_DATASET = [
+    {
+        "inputs": {"query": "What is Nubank's customer base size and activity rate in Brazil?"},
+        "outputs": {
+            "expected_page": 1,
+            "expected_quarter": "3Q25",
+            "expected_facts": "110 million customers, activity rate above 85%"
+        }
+    },
+    {
+        "inputs": {"query": "What are the customer growth milestones in Mexico and Colombia?"},
+        "outputs": {
+            "expected_page": 1,
+            "expected_quarter": "3Q25",
+            "expected_facts": "Mexico surpassed 13 million; Colombia approaching 4 million"
+        }
+    },
+    {
+        "inputs": {"query": "What was Nubank's total credit portfolio size and year-over-year growth rate?"},
+        "outputs": {
+            "expected_page": 1,
+            "expected_quarter": "3Q25",
+            "expected_facts": "Credit portfolio reached $30.4 billion, up 42% YoY FXN"
+        }
+    },
+    {
+        "inputs": {"query": "What were the business highlights and new product launches across markets?"},
+        "outputs": {
+            "expected_page": 3,
+            "expected_quarter": "4Q25",
+            "expected_facts": "Over 100 new products, payroll loans in Brazil"
+        }
+    },
+    {
+        "inputs": {"query": "How is Nubank positioned relative to private financial institutions in Brazil?"},
+        "outputs": {
+            "expected_page": 1,
+            "expected_quarter": "4Q25",
+            "expected_facts": "Largest private financial institution by number of customers (Central Bank)"
+        }
+    },
+    {
+        "inputs": {"query": "What was the growth in secured and unsecured lending in 3Q25?"},
+        "outputs": {
+            "expected_page": 1,
+            "expected_quarter": "3Q25",
+            "expected_facts": "Secured grew 133%, unsecured grew 63%"
+        }
+    }
+]
+
+def main():
+    print("Connecting to LangSmith Client...")
+    client = Client()
+    
+    dataset_name = "nubank-operational-qa"
+    description = "Golden dataset of executive operational and financial queries against Nubank quarterly filings."
+
+    # Check if dataset already exists, or create a fresh one
+    if client.has_dataset(dataset_name=dataset_name):
+        print(f"Dataset '{dataset_name}' already exists. Deleting older version for a clean upload...")
+        client.delete_dataset(dataset_name=dataset_name)
+
+    print(f"Creating fresh LangSmith dataset: '{dataset_name}'...")
+    dataset = client.create_dataset(
+        dataset_name=dataset_name,
+        description=description
+    )
+
+    # Upload examples
+    print(f"Uploading {len(EXPANDED_GOLDEN_DATASET)} golden examples to LangSmith...")
+    for item in EXPANDED_GOLDEN_DATASET:
+        client.create_example(
+            inputs=item["inputs"],
+            outputs=item["outputs"],
+            dataset_id=dataset.id
+        )
+
+    print(f"\n🎉 Successfully uploaded {len(EXPANDED_GOLDEN_DATASET)} examples to LangSmith!")
+    print(f"View it live at: https://smith.langchain.com")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path=".dockerignore">
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.git
+.gitignore
+.env
+tests/
+</file>
+
+<file path=".python-version">
+3.13
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: smart-rag-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: .
+    container_name: smart-rag-frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      # Tells the Streamlit container to communicate with the backend container
+      - API_BASE_URL=http://backend:8000/api/v1
+    depends_on:
+      - backend
+    command: ["uv", "run", "streamlit", "run", "app/frontend/ui.py", "--server.port=8501", "--server.address=0.0.0.0"]
+</file>
+
+<file path="Dockerfile">
+# Use official lightweight Python image
+FROM python:3.13-slim-bookworm
+
+# Install uv directly from Astral's official binary distribution
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Set working directory
+WORKDIR /app
+
+# Enable bytecode compilation & copy environment efficiently
+ENV UV_COMPILE_BYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Copy dependency definition files first for optimal Docker layer caching
+COPY pyproject.toml uv.lock* ./
+
+# Install project dependencies using uv sync
+RUN uv sync --python 3.13 --frozen --no-install-project
+
+# Copy application source code
+COPY app/ ./app/
+COPY data/ ./data/
+
+# Place the uv virtual environment at the beginning of PATH
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Default port exposed for FastAPI backend
+EXPOSE 8000
+
+# Default command launches FastAPI
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+</file>
+
+<file path="main.py">
+def main():
+    print("Hello from smart-business-rag!")
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="pyproject.toml">
+[project]
+name = "smart-business-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.143.2",
+    "fastembed>=0.9.0",
+    "langchain>=1.4.6",
+    "langchain-community>=0.4.2",
+    "langchain-core>=1.6.11",
+    "langchain-google-genai>=4.4.2",
+    "langchain-groq>=1.1.3",
+    "langgraph>=1.2.15",
+    "langsmith>=0.14.9",
+    "pgvector>=0.5.1",
+    "psycopg2-binary>=2.9.13",
+    "psycopg[binary]>=3.3.6",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.0",
+    "pypdf>=6.20.1",
+    "pytest>=9.1.1",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
+    "ruff>=0.17.1",
+    "sentence-transformers>=6.1.0",
+    "sqlalchemy>=2.1.4",
+    "sqlmodel>=0.0.48",
+    "streamlit>=1.66.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]
+</file>
+
+<file path="README.md">
+```markdown
+# 💼 Smart Business Operations RAG Assistant
+### Grounded Multi-Turn Decision Support System for Corporate & Financial Filings
+
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-1.0+-009688.svg)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-orange.svg)](https://langchain-ai.github.io/langgraph/)
+[![LangSmith Evaluated](https://img.shields.io/badge/Evaluated%20with-LangSmith-green.svg)](https://smith.langchain.com/)
+[![pgvector](https://img.shields.io/badge/VectorDB-PostgreSQL%20%2B%20pgvector-336791.svg)](https://github.com/pgvector/pgvector)
+[![Docker](https://img.shields.io/badge/Container-Docker%20Compose-blue.svg)](https://www.docker.com/)
+
+An enterprise-oriented Retrieval-Augmented Generation (RAG) assistant designed to solve a core business bottleneck: **analyzing dense, unstructured corporate filings (e.g., quarterly reports, 10-Ks, shareholder releases) while eliminating hallucinations and enforcing strict, page-level citation provenance.**
+
+---
+
+## 🏛️ System Architecture
+
+The system decouples fast micro-evaluations from high-accuracy reasoning using a **Dual-Engine / Zero-Dollar inference architecture**:
+
+```text
+       [ User Query ] (e.g. "What about Colombia?")
+              │
+              ▼
+   ┌───────────────────────┐
+   │ 0. QUERY REFORMULATOR │  <-- Groq (sub-200ms) re-writes follow-ups
+   │   (Short-Term Memory) │      into standalone search queries
+   └──────────┬────────────┘
+              │
+              ▼
+   ┌───────────────────────┐
+   │  1. HYBRID RETRIEVAL  │  <-- PostgreSQL + pgvector (Supabase)
+   │  (Metadata Filtering) │      Searches top-k relevant chunks
+   └──────────┬────────────┘
+              │
+              ▼
+   ┌───────────────────────┐
+   │  2. RELEVANCE GRADER  │  <-- Groq micro-evaluator discards
+   │    (Fast Guardrail)   │      irrelevant noise & hallucinations
+   └──────────┬────────────┘
+              │
+         Is context valid?
+        ┌─────┴─────┐
+       YES          NO
+        │            │
+        ▼            ▼
+ ┌─────────────┐   ┌───────────────────────────┐
+ │ 3. GENERATE │   │ 4. FALLBACK / OUT-OF-SCOPE│
+ └──────┬──────┘   └─────────────┬─────────────┘
+        │                        │
+        │ Gemini (Heavy Node)    │ Graceful notification:
+        │ Pydantic JSON Citations│ "Data not verified in filings"
+        │                        │
+        └────────────┬───────────┘
+                     ▼
+       [ Streamlit Executive UI ]
+```
+
+---
+
+## ✨ Key Features & Engineering Highlights
+
+* **Traceable Page-Level Citations:** Every claim links directly to its source filing, physical page number, and verbatim excerpt.
+* **Dual-Engine Model Routing:**
+  * **Groq (`openai/gpt-oss-120b`):** Handles ultra-fast conversational query reformulation and document relevance grading.
+  * **Google Gemini (`gemini-2.5-flash`):** Executes complex financial synthesis and deterministic structured JSON outputs.
+* **Multi-Turn Conversational Memory:** Built with LangGraph checkpointers (`MemorySaver`), preserving context across turns via unique `thread_id` sessions.
+* **Production-Grade Testing & Observability:**
+  * Automated **Pytest** test suite with mocked LLM calls for lightning-fast, zero-token CI testing.
+  * **LangSmith Cloud Evaluation Benchmark:** 100% Groundedness score on golden test datasets with full latency and token tracing.
+* **Dynamic PDF Ingestion Pipeline:** On-the-fly PDF extraction (`pypdf`), semantic chunking with metadata preservation (`RecursiveCharacterTextSplitter`), and local vector embeddings (`sentence-transformers/all-MiniLM-L6-v2`).
+
+---
+
+## 📊 Benchmark & Evaluation (LangSmith)
+
+The system was evaluated against a **Golden Dataset** of representative corporate queries targeting Nubank quarterly filings (3Q25 and 4Q25).
+
+| Metric | Result | Benchmark Target |
+| :--- | :--- | :--- |
+| **Groundedness Score** | **1.00 / 1.00 (100%)** | $\ge 0.80$ |
+| **Page-Level Retrieval Hit Rate** | **80.0%** | $\ge 80.0\%$ |
+| **Citations Verification** | **100% verifiable quotes** | Auditable |
+| **Automated Tests** | **13 / 13 Passed** | 100% Pass Rate |
+
+---
+
+## 🚀 Quickstart & Setup
+
+### Prerequisites
+* Python 3.11+
+* `uv` package manager (`pip install uv` or via Astral install script)
+* Free API keys for:
+  * Google AI Studio (`GOOGLE_API_KEY`)
+  * Groq Console (`GROQ_API_KEY`)
+  * Supabase PostgreSQL URL (`DATABASE_URL`)
+  * LangSmith (`LANGSMITH_API_KEY` - optional, for tracing)
+
+### 1. Clone & Configure
+```bash
+git clone https://github.com/bruno-reichert/smart-business-rag.git
+cd smart-business-rag
+cp .env.example .env  # Populate your credentials
+```
+
+### 2. Run Locally with `uv`
+```bash
+# 1. Install dependencies
+uv sync
+
+# 2. Start FastAPI Backend (Terminal 1)
+uv run uvicorn app.main:app --reload --port 8000
+
+# 3. Start Streamlit UI (Terminal 2)
+uv run streamlit run app/frontend/ui.py
+```
+* **Interactive UI:** `http://localhost:8501`
+* **Swagger API Docs:** `http://localhost:8000/docs`
+
+### 3. Run with Docker Compose
+```bash
+docker compose up --build
+```
+
+### 4. Run Test Suite & Benchmark
+```bash
+# Run unit & API integration tests
+uv run pytest -v
+
+# Run local retrieval benchmark
+uv run python -m tests.evaluate_retrieval
+
+# Run LangSmith cloud evaluation experiment
+uv run python -m tests.run_langsmith_eval
+```
+
+---
+
+## 📁 Repository Structure
+
+```text
+smart-business-rag/
+├── app/
+│   ├── api/v1/             # REST endpoints (/health, /filings/query, /documents/upload)
+│   ├── core/               # Pydantic Settings & environment config
+│   ├── frontend/           # Streamlit conversational chat interface
+│   ├── models/             # Pydantic schemas (Contracts, Citations, Insights)
+│   └── services/           # LangGraph graph, state, chunker, vector store
+├── data/                   # Source corporate PDFs
+├── tests/                  # Unit tests, integration tests, and evaluation scripts
+├── Dockerfile              # Multi-stage container build
+├── docker-compose.yml      # Multi-container orchestration
+└── pyproject.toml          # Project configuration & dependencies
+```
+
+---
+
+## 👨‍💻 Author
+
+**Bruno Benno Reichert**  
+*Bachelor in Business Administration (UFRGS) | Junior AI Engineer & Python Back-end Developer*  
+* [LinkedIn](https://linkedin.com/in/brunobennoreichert) • [GitHub](https://github.com/bruno-reichert) • [Portfolio](https://bruno-reichert.github.io/portfolio-page)
+</file>
+
+<file path="requirements.txt">
+# Web Framework & API
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# LangChain & AI Orchestration
+langchain
+langchain-core
+langchain-community
+langgraph
+langchain-google-genai
+langchain-groq
+
+# Document Parsing & Embeddings
+pypdf
+sentence-transformers
+
+# Database & Vector Store
+psycopg2-binary
+pgvector
+sqlalchemy
+sqlmodel
+
+# Observability, Testing & Quality
+langsmith
+pytest
+ruff
+python-dotenv
+</file>
+
+<file path="roadmap.md">
+# 🗺️ Roadmap: Smart Business Operations RAG Assistant
+
+An enterprise-oriented Decision Support System designed to analyze unstructured corporate filings (e.g., 10-Ks, quarterly earnings, operational guidelines) and return strictly verified, cited operational insights.
+
+---
+
+## 🛠️ The Tech Stack (Zero-Dollar / "Crusty Nails")
+* **Language & Runtime:** Python 3.11+
+* **Package / Environment Manager:** `uv`
+* **Synthesis & Reasoning LLM:** Google Gemini (`gemini-2.5-flash` / `gemini-1.5-flash`) via `langchain-google-genai`
+* **Fast Routing & Grading LLM:** Groq (`openai/gpt-oss-120b` or current high-speed tier) via `langchain-groq`
+* **Embeddings:** Google AI Studio (`models/text-embedding-004`) or local `sentence-transformers`
+* **Vector Store & Relational DB:** PostgreSQL with `pgvector` extension (Docker local or Supabase Free Tier)
+* **API & App Framework:** FastAPI, Pydantic v2, SQLModel / SQLAlchemy
+* **Agent Orchestration & Workflow:** LangGraph, LangChain
+* **Observability & Tracing:** LangSmith
+* **Quality Assurance & DevOps:** Pytest, Docker, Docker Compose
+
+---
+
+## 📅 Multi-Part Action Plan
+
+### 📋 Phase 0: Groundwork & Environment Validation [COMPLETED ✅]
+- [x] Initialize repo and package management using `uv`.
+- [x] Configure centralized `.env` secrets.
+- [x] Validate model connectivity (`test_connections.py`) for Gemini and Groq.
+- [x] Choose sample corporate filings dataset (e.g., 2 consecutive quarterly reports from Nubank, Petrobras, or Mercado Livre).
+
+---
+
+### 📥 Phase 1: Ingestion, Metadata Enrichment & Vector Pipeline [COMPLETED ✅]
+> **Goal:** Transform unstructured PDFs into cleanly chunked, highly searchable vector embeddings with rigorous page-level provenance.
+
+- [X] **1.1 PDF Extraction:**
+  - Build an ingestion module using `pypdf` that extracts text page-by-page.
+  - Retain structural metadata: `document_name`, `company`, `fiscal_period`, and `page_number`.
+- [X] **1.2 Chunking Strategy:**
+  - Implement `RecursiveCharacterTextSplitter` with tuned chunk size (~800–1000 tokens) and overlap (~150 tokens) to preserve financial table context.
+- [X] **1.3 Vector Store Setup (`pgvector`):**
+  - Spin up PostgreSQL with `pgvector` (via local `docker-compose.yml` or remote Supabase).
+  - Define the vector schema using SQLModel/SQLAlchemy.
+- [X] **1.4 Embedding & Loading:**
+  - Generate embeddings and persist chunks with metadata into the vector database.
+  - Write an isolated smoke test script to verify semantic similarity search returns relevant chunks with correct metadata.
+
+---
+
+### 🧠 Phase 2: Agentic RAG Workflow with LangGraph
+> **Goal:** Implement a self-correcting retrieval graph to eliminate hallucinations and enforce strict business citations.
+
+- [X] **2.1 Define the Graph State:**
+  - Create a Pydantic/TypedDict state holding: `query`, `documents`, `web_search_fallback`, `generation`, and `retry_count`.
+- [X] **2.2 Fast Node - Retrieval Grader (Groq):**
+  - Use Groq for ultra-low latency relevance grading.
+  - Prompt: Determine whether retrieved chunks contain sufficient context to answer the business question.
+- [X] **2.3 Heavy Node - Answer Synthesis & Citations (Gemini):**
+  - Pass validated chunks to Gemini with a strict system prompt.
+  - Enforce structured output via Pydantic:
+    ```json
+    {
+      "answer": "Net margin increased by 2.4%...",
+      "citations": [
+        {"document": "Q3_Report.pdf", "page": 12, "quote": "..."}
+      ]
+    }
+    ```
+- [X] **2.4 Guardrail Node - Hallucination / Grounding Check:**
+  - Ensure every financial/operational metric in the final answer is directly supported by the retrieved quotes.
+- [X] **2.5 Observability:**
+  - Verify LangSmith project dashboard logs every node transition, latency profile, and token count.
+
+---
+
+### 🚀 Phase 3: The Production API Layer (FastAPI)
+> **Goal:** Expose the ingestion and RAG agent pipelines via robust, documented REST endpoints.
+
+- [X] **3.1 Architecture & Project Structure:**
+  - Set up a clean layered pattern:
+    ```text
+    app/
+    ├── api/v1/endpoints/  # Route handlers (/query, /documents, /health)
+    ├── core/              # Config, settings, logging
+    ├── models/            # Pydantic schemas (Request/Response models)
+    ├── services/          # LangGraph graph, vector store client
+    └── main.py            # FastAPI entry point & CORS
+    ```
+- [X] **3.2 Ingestion Endpoint (`POST /api/v1/documents/upload`):**
+  - Accept PDF file uploads, execute the ingestion pipeline asynchronously, and return an ingestion summary status.
+- [X] **3.3 Operational Query Endpoint (`POST /api/v1/query`):**
+  - Accept query payload with optional metadata filters (e.g., `company`, `year`).
+  - Stream or return the structured response with citations.
+- [X] **3.4 Health & Metrics (`GET /health`):**
+  - Verify DB connection and LLM API availability for container health checks.
+
+---
+
+### 🛡️ Phase 4: Automated Testing & Verification
+> **Goal:** Guarantee production reliability and prevent regressions.
+
+- [X] **4.1 Unit Testing:**
+  - Test chunking logic, metadata preservation, and Pydantic schema validation.
+- [X] **4.2 Integration Testing:**
+  - Write Pytest routines mocking external LLM responses to test FastAPI endpoints and status codes (200, 422, 500).
+- [X] **4.3 Retrieval Evaluation:**
+  - Create a golden dataset of 5 representative business questions with known ground-truth citations to benchmark retrieval accuracy.
+
+---
+
+### 💬 Phase 5: Conversational Memory & Interactive Chat UI
+> **Goal:** Transform the single-shot RAG API into a multi-turn operational co-pilot with conversation history tracking, query reformulation, and a visual chat interface.
+
+- [X] **5.1 Conversational State & LangGraph Checkpointing:**
+  - Add chat message history (`messages: List[BaseMessage]`) to `AgentState`.
+  - Integrate LangGraph's in-memory checkpointer (`MemorySaver`) using persistent `thread_id` sessions.
+- [X] **5.2 Contextual Query Reformulation Node (Groq):**
+  - Implement a fast pre-retrieval node using Groq to re-write follow-up queries (e.g., *"What about Colombia?"* -> *"What was Nubank's customer growth in Colombia in 4Q25?"*) based on recent conversation context before hitting `pgvector`.
+- [X] **5.3 Conversational API Endpoint Update:**
+  - Update `POST /api/v1/filings/query` to accept an optional `thread_id` (generating a UUID if none is provided).
+  - Return the session `thread_id` alongside the insight so clients can continue the conversation seamlessly.
+- [ ] **5.4 Interactive Executive Chat Interface (Streamlit):**
+  - Build a sleek, single-page corporate dashboard (`app/frontend/ui.py`):
+    - Multi-turn chat bubble interface (`st.chat_message`).
+    - Expandable citation drawers displaying source documents, page numbers, and exact quotes.
+    - Quarter selector filter and "New Session" thread reset button.
+    - Direct integration with our running FastAPI backend over HTTP.
+
+---
+
+### 🐳 Phase 6: Containerization, Cloud Deployment & Showcase
+> **Goal:** Deliver a showcase-ready, containerized system that can be launched with a single command or accessed via the cloud.
+
+- [X] **6.1 Production Dockerization:**
+  - Multi-stage `Dockerfile` leveraging `uv` for minimal image footprints and caching.
+  - `docker-compose.yml` linking the FastAPI backend, the Streamlit frontend, and the Supabase network.
+- [X] **6.2 Cloud Deployment:**
+  - Deploy backend and frontend services (Render / Railway / Hugging Face Spaces).
+- [X] **6.3 Executive README & Portfolio Presentation:**
+  - Business problem narrative, system architecture diagram, embedded LangSmith evaluation screenshots, and quick-start instructions.
+
+---
+
+## 🎯 Updated Progress Tracker
+- [x] Phase 0: Foundations & Connections
+- [x] Phase 1: Ingestion & Vector Storage (pgvector + Supabase)
+- [x] Phase 2: LangGraph Agentic Pipeline & LangSmith Tracing
+- [x] Phase 3: FastAPI Backend & Swagger UI
+- [x] Phase 4: Pytest Suite & Retrieval Golden Dataset Benchmark
+- [x] Phase 5: Conversational Memory & Streamlit Chat Interface
+- [x] Phase 6: Containerization, Deployment & Showcase
+</file>
+
+</files>
