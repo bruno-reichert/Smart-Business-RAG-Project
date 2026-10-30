@@ -1,4 +1,3 @@
-```markdown
 # 💼 Smart Business Operations RAG Assistant
 ### Grounded Multi-Turn Decision Support System for Corporate & Financial Filings
 
