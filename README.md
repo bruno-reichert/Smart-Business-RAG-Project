@@ -69,7 +69,7 @@ The system decouples fast micro-evaluations from high-accuracy reasoning using a
 * **Testing & Observability:**
   * Automated **Pytest** test suite with mocked LLM calls for fast, zero-token local testing.
   * **Benchmark & Evaluation:** Small golden dataset (6 questions) with latency and token tracing.
-* **Dynamic PDF Ingestion Pipeline:** On-the-fly PDF extraction (`pypdf`), recursive character-based chunking with metadata preservation (`RecursiveCharacterTextSplitter`), and local vector embeddingsia FastEmbed (`all-MiniLM-L6-v2`).
+* **Dynamic PDF Ingestion Pipeline:** On-the-fly PDF extraction (`pypdf`), recursive character-based chunking with metadata preservation (`RecursiveCharacterTextSplitter`), and local vector embeddings via FastEmbed (`all-MiniLM-L6-v2`).
 
 ---
 
