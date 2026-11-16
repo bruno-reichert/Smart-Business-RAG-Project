@@ -35,3 +35,13 @@ dependencies = [
 dev = [
     "httpx>=0.28.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_new"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "integration: marks tests requiring live external services like LLMs or databases (run with '-m integration', deselect with '-m \"not integration\"')"
+]
+addopts = "-v --strict-markers"
