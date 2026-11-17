@@ -18,10 +18,10 @@
   - [X] Unit test `decide_to_generate` conditional router (empty vs. populated relevant documents) without invoking LLMs.
 
 ## Step 3: Mocked API Integration Tests (`tests_new/test_api.py`)
-- [ ] **3.1 System Endpoints:** Test `/` (root) and `/api/v1/health` status codes and payload structures.
-- [ ] **3.2 Input Validation:** Test bad requests on `/api/v1/filings/query` (HTTP 422 triggers).
-- [ ] **3.3 Mocked Query Execution:** Test happy path for conversational query endpoint with mocked agent response.
-- [ ] **3.4 Ingestion Endpoint:** Test `/api/v1/documents/upload` validation (reject non-PDFs) and mocked successful upload.
+- [X] **3.1 System Endpoints:** Test `/` (root) and `/api/v1/health` status codes and payload structures.
+- [X] **3.2 Input Validation:** Test bad requests on `/api/v1/filings/query` (HTTP 422 triggers).
+- [X] **3.3 Mocked Query Execution:** Test happy path for conversational query endpoint with mocked agent response.
+- [x] **3.4 Ingestion Endpoint:** Test `/api/v1/documents/upload` validation (reject non-PDFs) and mocked successful upload.
 
 ## Step 4: Live Infrastructure Tests (`tests_new/test_live_integrations.py` - `@pytest.mark.integration`)
 - [ ] **4.1 Model Connectivity:** Live ping to Groq (`openai/gpt-oss-120b`) and Gemini (`gemini-3.5-flash`).
