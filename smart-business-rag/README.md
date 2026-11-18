@@ -109,7 +109,7 @@ The system was evaluated against a **Golden Dataset** of representative corporat
 ### 1. Clone & Configure
 ```bash
 git clone https://github.com/bruno-reichert/smart-business-rag.git
-cd smart-business-rag
+cd Smart-Business-RAG-Project/smart-business-rag
 cp .env.example .env  # Populate your credentials
 ```
 

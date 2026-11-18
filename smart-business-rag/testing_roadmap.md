@@ -24,10 +24,10 @@
 - [x] **3.4 Ingestion Endpoint:** Test `/api/v1/documents/upload` validation (reject non-PDFs) and mocked successful upload.
 
 ## Step 4: Live Infrastructure Tests (`tests_new/test_live_integrations.py` - `@pytest.mark.integration`)
-- [ ] **4.1 Model Connectivity:** Live ping to Groq (`openai/gpt-oss-120b`) and Gemini (`gemini-3.5-flash`).
-- [ ] **4.2 Database Connectivity:** Live connection to Supabase PostgreSQL and verify `pgvector` extension activation.
-- [ ] **4.3 Real Document Ingestion:** Verify page extraction and chunking against actual files in `data/`.
-- [ ] **4.4 Golden Dataset Retrieval Benchmark:** Live pgvector retrieval benchmark validating top-k page provenance and hit rate.
+- [X] **4.1 Model Connectivity:** Live ping to Groq (`openai/gpt-oss-120b`) and Gemini (`gemini-3.5-flash`).
+- [X] **4.2 Database Connectivity:** Live connection to Supabase PostgreSQL and verify `pgvector` extension activation.
+- [X] **4.3 Real Document Ingestion:** Verify page extraction and chunking against actual files in `data/`.
+- [X] **4.4 Golden Dataset Retrieval Benchmark:** Live pgvector retrieval benchmark validating top-k page provenance and hit rate.
 
 ## Step 5: Live LangGraph Workflow Tests (`tests_new/test_live_agent.py` - `@pytest.mark.integration`)
 - [ ] **5.1 Single-Turn Grounded Query:** Ask a valid corporate filing question; verify `is_grounded=True` and citations structure.
