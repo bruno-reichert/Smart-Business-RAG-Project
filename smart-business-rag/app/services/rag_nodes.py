@@ -23,7 +23,7 @@ groq_llm = ChatGroq(
 
 # Gemini: For high-accuracy synthesis and structured output
 gemini_llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model="gemini-3.5-flash-lite",
     temperature=0.0
 )
 

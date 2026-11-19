@@ -30,9 +30,9 @@
 - [X] **4.4 Golden Dataset Retrieval Benchmark:** Live pgvector retrieval benchmark validating top-k page provenance and hit rate.
 
 ## Step 5: Live LangGraph Workflow Tests (`tests_new/test_live_agent.py` - `@pytest.mark.integration`)
-- [ ] **5.1 Single-Turn Grounded Query:** Ask a valid corporate filing question; verify `is_grounded=True` and citations structure.
-- [ ] **5.2 Fallback / Guardrail Routing:** Ask an out-of-scope question; verify routing to `fallback` node (`is_grounded=False`).
-- [ ] **5.3 Multi-Turn Memory & Reformulation:** Execute a two-turn conversation using `thread_id` to verify context retention across follow-up queries.
+- [X] **5.1 Single-Turn Grounded Query:** Ask a valid corporate filing question; verify `is_grounded=True` and citations structure.
+- [X] **5.2 Fallback / Guardrail Routing:** Ask an out-of-scope question; verify routing to `fallback` node (`is_grounded=False`).
+- [X] **5.3 Multi-Turn Memory & Reformulation:** Execute a two-turn conversation using `thread_id` to verify context retention across follow-up queries.
 
 ## Step 6: Verification & Final Migration
 - [ ] **6.1 Offline Verification:** Run unit test suite (`uv run pytest -m "not integration"`).
