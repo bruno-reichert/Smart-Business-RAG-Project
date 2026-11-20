@@ -37,7 +37,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests_new"]
+testpaths = ["tests"]
 pythonpath = ["."]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]

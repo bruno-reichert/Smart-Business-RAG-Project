@@ -37,4 +37,4 @@
 ## Step 6: Verification & Final Migration
 - [X] **6.1 Offline Verification:** Run unit test suite (`uv run pytest -m "not integration"`).
 - [X] **6.2 Live Verification:** Run full test suite with live services (`uv run pytest -m "integration"`).
-- [ ] **6.3 Final Migration:** Deprecate old `tests/` folder and promote `tests_new/` to `tests/`.
+- [X] **6.3 Final Migration:** Deprecate old `tests/` folder and promote `tests_new/` to `tests/`.

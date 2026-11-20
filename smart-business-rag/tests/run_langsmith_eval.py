@@ -1,3 +1,4 @@
+import uuid
 import os
 import sys
 from pathlib import Path
@@ -22,15 +23,18 @@ agent = build_rag_graph()
 def target_pipeline(inputs: dict) -> dict:
     """The function LangSmith calls for each example in the dataset."""
     query = inputs["query"]
+    
+    # 1. Fresh session thread per evaluation example
+    session_config = {"configurable": {"thread_id": f"eval-{uuid.uuid4()}"}}
+
+    # 2. Package state payload
     state_input: AgentState = {
         "query": query,
         "fiscal_filter": None,
-        "documents": [],
-        "relevant_documents": [],
-        "final_insight": None
     }
     
-    result = agent.invoke(state_input)
+    # 3. Invoke with config
+    result = agent.invoke(state_input, config=session_config)
     insight = result.get("final_insight")
     
     return {
