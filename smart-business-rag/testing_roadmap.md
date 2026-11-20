@@ -35,6 +35,6 @@
 - [X] **5.3 Multi-Turn Memory & Reformulation:** Execute a two-turn conversation using `thread_id` to verify context retention across follow-up queries.
 
 ## Step 6: Verification & Final Migration
-- [ ] **6.1 Offline Verification:** Run unit test suite (`uv run pytest -m "not integration"`).
-- [ ] **6.2 Live Verification:** Run full test suite with live services (`uv run pytest -m "integration"`).
+- [X] **6.1 Offline Verification:** Run unit test suite (`uv run pytest -m "not integration"`).
+- [X] **6.2 Live Verification:** Run full test suite with live services (`uv run pytest -m "integration"`).
 - [ ] **6.3 Final Migration:** Deprecate old `tests/` folder and promote `tests_new/` to `tests/`.
